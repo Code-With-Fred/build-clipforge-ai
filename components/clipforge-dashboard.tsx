@@ -61,7 +61,7 @@ function StatCard({ label, value, detail, icon: Icon, accent }: { label: string;
   )
 }
 
-export default function ClipforgeDashboard() {
+export default function ClipforgeDashboard({ user }: { user?: { name?: string | null; email: string } }) {
   const [active, setActive] = useState('Overview')
   const [showUpload, setShowUpload] = useState(false)
   const [fileName, setFileName] = useState('')

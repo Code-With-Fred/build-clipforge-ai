@@ -4,6 +4,20 @@
 
 @custom-variant dark (&:is(.dark *));
 
+.auth-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #0d0d10; color: #f4f4f5; }
+.auth-card { width: min(100%, 420px); padding: 36px; border: 1px solid #27272a; border-radius: 20px; background: #151518; box-shadow: 0 24px 80px rgba(0,0,0,.35); }
+.auth-brand { font-size: 13px; font-weight: 800; letter-spacing: .16em; color: #a1a1aa; }
+.auth-brand span { color: #c9ff3d; }
+.auth-card h1 { margin: 42px 0 8px; font-size: 30px; letter-spacing: -.04em; }
+.auth-card > p { margin: 0; color: #a1a1aa; }
+.auth-form { display: grid; gap: 12px; margin: 28px 0 20px; }
+.auth-form input { width: 100%; border: 1px solid #3f3f46; border-radius: 10px; background: #1c1c21; color: #f4f4f5; padding: 13px 14px; outline: none; }
+.auth-form input:focus { border-color: #c9ff3d; box-shadow: 0 0 0 3px rgba(201,255,61,.14); }
+.auth-form button { border: 0; border-radius: 10px; background: #c9ff3d; color: #101113; padding: 13px 14px; font-weight: 800; cursor: pointer; }
+.auth-form button:disabled { cursor: wait; opacity: .6; }
+.auth-card a { color: #c9ff3d; font-size: 13px; }
+.auth-error { color: #fca5a5 !important; font-size: 13px; }
+
 @theme inline {
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
