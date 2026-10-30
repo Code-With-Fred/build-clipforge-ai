@@ -10,7 +10,7 @@ declare global {
   }
 }
 
-const CORE_BASE = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd'
+const CORE_BASE = '/ffmpeg'
 const FFMPEG_SCRIPT = '/ffmpeg/ffmpeg.js'
 
 function loadScript(src: string) {
@@ -68,19 +68,21 @@ export function VideoCutter() {
       if (!window.FFmpegWASM) throw new Error('FFmpeg runtime unavailable')
       const { FFmpeg } = window.FFmpegWASM
       const fetchFile = async (source: File) => new Uint8Array(await source.arrayBuffer())
-      const toBlobURL = async (url: string, mime: string) => URL.createObjectURL(new Blob([await (await fetch(url)).arrayBuffer()], { type: mime }))
       const ffmpeg = ffmpegRef.current ?? new FFmpeg()
       ffmpegRef.current = ffmpeg
       if (!ffmpeg.loaded) {
         await ffmpeg.load({
-          coreURL: await toBlobURL(`${CORE_BASE}/ffmpeg-core.js`, 'text/javascript'),
-          wasmURL: await toBlobURL(`${CORE_BASE}/ffmpeg-core.wasm`, 'application/wasm'),
+          coreURL: `${CORE_BASE}/ffmpeg-core.js`,
+          wasmURL: `${CORE_BASE}/ffmpeg-core.wasm`,
         })
       }
       ffmpeg.on('progress', ({ progress: value }: { progress: number }) => setProgress(Math.round(value * 100)))
-      const inputName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_') || 'input.video'
+      const extension = file.name.match(/\.[a-z0-9]+$/i)?.[0].toLowerCase() || '.video'
+      const inputName = `input${extension}`
+      try { await ffmpeg.deleteFile(inputName) } catch {}
+      try { await ffmpeg.deleteFile('clip.mp4') } catch {}
       await ffmpeg.writeFile(inputName, await fetchFile(file))
-      await ffmpeg.exec(['-ss', String(start), '-i', inputName, '-t', String(end - start), '-c:v', 'libx264', '-c:a', 'aac', '-movflags', '+faststart', 'clip.mp4'])
+      await ffmpeg.exec(['-y', '-ss', String(start), '-i', inputName, '-t', String(end - start), '-c', 'copy', '-avoid_negative_ts', 'make_zero', 'clip.mp4'])
       const data = await ffmpeg.readFile('clip.mp4')
       const blob = new Blob([data as Uint8Array], { type: 'video/mp4' })
       setOutputUrl(URL.createObjectURL(blob))
