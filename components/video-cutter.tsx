@@ -71,6 +71,7 @@ export function VideoCutter() {
       <p className="mt-8 text-xs font-semibold uppercase tracking-[0.2em] text-violet-300">ClipForge AI</p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">Cut a video into a clip</h1>
       <p className="mt-2 text-sm text-[#858894]">Everything runs in your browser. Your original video is not uploaded.</p>
+      <p className="mt-2 text-xs text-[#777a86]">For the most reliable preview, export phone videos as H.264 MP4. HEVC/H.265 MOV files may not decode in every browser.</p>
       <label htmlFor="cutter-file" className="mt-8 flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-violet-300/30 bg-violet-400/[0.05] px-6 py-14 text-center hover:bg-violet-400/[0.09]">
         <Upload className="text-violet-300" />
         <span className="mt-3 text-sm font-medium">Choose a video</span>
@@ -78,7 +79,7 @@ export function VideoCutter() {
         <input id="cutter-file" type="file" accept="video/*" className="sr-only" onChange={(event) => chooseFile(event.target.files?.[0])} />
       </label>
       {file && <section className="mt-6 rounded-2xl border border-white/[0.08] bg-[#111216] p-5">
-        <video className="aspect-video w-full rounded-xl bg-black object-contain" src={fileUrl} controls onLoadedMetadata={(event) => { const next = event.currentTarget.duration; setDuration(next); setEnd(next) }} />
+        <video className="aspect-video w-full rounded-xl bg-black object-contain" src={fileUrl} controls onLoadedMetadata={(event) => { const next = event.currentTarget.duration; setDuration(next); setEnd(next) }} onError={() => setError('This video codec is not supported by the browser preview. Export it as H.264 MP4 and try again.')} />
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <label className="text-xs text-[#a8aab4]">Start seconds<input type="number" min="0" max={Math.max(0, end - 0.1)} step="0.1" value={start} onChange={(event) => setStart(Number(event.target.value))} className="mt-2 w-full rounded-xl border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none" /></label>
           <label className="text-xs text-[#a8aab4]">End seconds<input type="number" min={Math.min(duration, start + 0.1)} max={duration} step="0.1" value={end} onChange={(event) => setEnd(Number(event.target.value))} className="mt-2 w-full rounded-xl border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none" /></label>
