@@ -57,7 +57,9 @@ export function VideoCutter() {
 
       setProgress(65)
       const clipRequest = new FormData()
-      clipRequest.append('publicId', uploaded.publicId)
+      const publicId = uploaded.public_id || uploaded.publicId
+      if (!publicId) throw new Error('Cloudinary did not return a video ID')
+      clipRequest.append('publicId', publicId)
       clipRequest.append('start', String(start))
       clipRequest.append('duration', String(end - start))
       const clipResponse = await fetch('/api/cloudinary/clip', { method: 'POST', body: clipRequest })
