@@ -32,9 +32,19 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
-const projects: Array<{ name: string; date: string; duration: string; clips: number; status: string; gradient: string; initial: string }> = []
+type DashboardProject = {
+  id: string
+  name: string
+  createdAt: Date | string
+  duration: number | string
+  status: string
+  date?: string
+  clips?: number
+  gradient?: string
+  initial?: string
+}
 
-const nav = [
+const nav: Array<{ label: string; icon: typeof Gauge; count?: number }> = [
   { label: 'Overview', icon: Gauge },
   { label: 'Projects', icon: FolderOpen },
   { label: 'Generated shorts', icon: Clapperboard },
@@ -57,14 +67,14 @@ function StatCard({ label, value, detail, icon: Icon, accent }: { label: string;
   )
 }
 
-export default function ClipforgeDashboard({ user }: { user?: { name?: string | null; email: string } }) {
+export default function ClipforgeDashboard({ projects = [], user }: { projects?: DashboardProject[]; user?: { name?: string | null; email: string } }) {
   const [active, setActive] = useState('Overview')
   const [showUpload, setShowUpload] = useState(false)
   const [fileName, setFileName] = useState('')
   const [playing, setPlaying] = useState<number | null>(null)
   const [search, setSearch] = useState('')
 
-  const filteredProjects = useMemo(() => projects.filter((project) => project.name.toLowerCase().includes(search.toLowerCase())), [search])
+  const filteredProjects = useMemo(() => projects.filter((project) => project.name.toLowerCase().includes(search.toLowerCase())), [projects, search])
 
   return (
     <div className="min-h-screen bg-[#090a0d] text-[#f4f4f5] selection:bg-violet-400/30">
