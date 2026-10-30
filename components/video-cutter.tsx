@@ -43,7 +43,7 @@ export function VideoCutter() {
           wasmURL: await toBlobURL(`${CORE_BASE}/ffmpeg-core.wasm`, 'application/wasm'),
         })
       }
-      ffmpeg.on('progress', ({ progress: value }) => setProgress(Math.round(value * 100)))
+      ffmpeg.on('progress', ({ progress: value }: { progress: number }) => setProgress(Math.round(value * 100)))
       await ffmpeg.writeFile('input.mp4', await fetchFile(file))
       await ffmpeg.exec(['-ss', String(start), '-i', 'input.mp4', '-t', String(end - start), '-c', 'copy', 'clip.mp4'])
       const data = await ffmpeg.readFile('clip.mp4')
