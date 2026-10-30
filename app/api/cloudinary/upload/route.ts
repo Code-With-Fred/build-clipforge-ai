@@ -10,14 +10,25 @@ const VIDEO_TYPES = /^(video\/(mp4|quicktime|webm|x-matroska|x-msvideo|mpeg)|app
 export async function POST(request: Request) {
   const formData = await request.formData()
   const file = formData.get("file")
+  const sourceUrl = formData.get("url")
+  const videoFile = file instanceof File ? file : null
+  const isRemoteSource = typeof sourceUrl === "string" && sourceUrl.length > 0
 
-  if (!(file instanceof File)) {
-    return NextResponse.json({ error: "A video file is required." }, { status: 400 })
+  if (!isRemoteSource && !videoFile) {
+    return NextResponse.json({ error: "Choose a video file or provide a direct video URL." }, { status: 400 })
   }
-  if (file.size === 0 || file.size > MAX_FILE_SIZE) {
+  if (isRemoteSource) {
+    try {
+      const parsed = new URL(sourceUrl)
+      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error()
+    } catch {
+      return NextResponse.json({ error: "Enter a valid direct video URL." }, { status: 400 })
+    }
+  }
+  if (videoFile && (videoFile.size === 0 || videoFile.size > MAX_FILE_SIZE)) {
     return NextResponse.json({ error: "Video must be smaller than 2 GB." }, { status: 413 })
   }
-  if (!VIDEO_TYPES.test(file.type) && !/\.(mp4|mov|m4v|webm|mkv|avi|mpeg|mpg)$/i.test(file.name)) {
+  if (videoFile && !VIDEO_TYPES.test(videoFile.type) && !/\.(mp4|mov|m4v|webm|mkv|avi|mpeg|mpg)$/i.test(videoFile.name)) {
     return NextResponse.json({ error: "Unsupported video format." }, { status: 415 })
   }
 
@@ -28,7 +39,7 @@ export async function POST(request: Request) {
   }
 
   const cloudinaryForm = new FormData()
-  cloudinaryForm.append("file", file)
+  cloudinaryForm.append("file", isRemoteSource ? sourceUrl : videoFile!)
   cloudinaryForm.append("upload_preset", uploadPreset)
   cloudinaryForm.append("resource_type", "video")
   cloudinaryForm.append("folder", "clipforge/source")
@@ -50,7 +61,7 @@ export async function POST(request: Request) {
     const [createdProject] = await db.insert(project).values({
       id: crypto.randomUUID(),
       userId: session.user.id,
-      name: file.name.replace(/\.[^.]+$/, ""),
+      name: isRemoteSource ? 'Remote video' : videoFile?.name.replace(/\.[^.]+$/, "") || 'Uploaded video',
       status: "uploaded",
       duration: Math.round(result.duration ?? 0),
       sourcePathname: result.public_id,
@@ -61,9 +72,9 @@ export async function POST(request: Request) {
       projectId,
       userId: session.user.id,
       pathname: result.public_id,
-      filename: file.name,
-      contentType: file.type || "video/mp4",
-      size: file.size,
+      filename: isRemoteSource ? sourceUrl : videoFile?.name || 'uploaded-video',
+      contentType: videoFile?.type || "video/mp4",
+      size: videoFile?.size || 0,
     })
   }
 

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 
 export function VideoCutter() {
   const [file, setFile] = useState<File | null>(null)
+  const [remoteUrl, setRemoteUrl] = useState('')
   const [fileUrl, setFileUrl] = useState('')
   const [duration, setDuration] = useState(0)
   const [start, setStart] = useState(0)
@@ -31,6 +32,7 @@ export function VideoCutter() {
     if (!looksLikeVideo) { setError('Choose a supported video file.'); return }
     setError('')
     setOutputUrl('')
+    setRemoteUrl('')
     if (fileUrl) URL.revokeObjectURL(fileUrl)
     setFile(nextFile)
     setFileUrl(URL.createObjectURL(nextFile))
@@ -41,16 +43,24 @@ export function VideoCutter() {
     setEnd(60)
   }
 
+  const uploadVideo = async () => {
+    if (!file && !remoteUrl.trim()) throw new Error('Choose a video file or provide a direct video URL.')
+    if (!file && /(^|\.)youtube\.com$|(^|\.)youtu\.be$/.test(new URL(remoteUrl.trim()).hostname)) throw new Error('YouTube watch links are not downloadable media URLs. Download the video first or use a direct MP4/MOV/WebM URL.')
+    const upload = new FormData()
+    if (file) upload.append('file', file)
+    else upload.append('url', remoteUrl.trim())
+    const response = await fetch('/api/cloudinary/upload', { method: 'POST', body: upload })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.error || 'Upload failed')
+    return result
+  }
+
   const cutVideo = async () => {
     if (!file || end <= start) return
     setProcessing(true); setProgress(10); setError(''); setOutputUrl('')
     try {
-      const upload = new FormData()
-      upload.append('file', file)
       setProgress(25)
-      const uploadResponse = await fetch('/api/cloudinary/upload', { method: 'POST', body: upload })
-      const uploaded = await uploadResponse.json()
-      if (!uploadResponse.ok) throw new Error(uploaded.error || 'Upload failed')
+      const uploaded = await uploadVideo()
 
       setProgress(65)
       const clipRequest = new FormData()
@@ -74,12 +84,8 @@ export function VideoCutter() {
     setAiProcessing(true); setError(''); setGeneratedClips([]); setProgress(5)
     let projectId = ''
     try {
-      const upload = new FormData()
-      upload.append('file', file)
       setProgress(20)
-      const uploadResponse = await fetch('/api/cloudinary/upload', { method: 'POST', body: upload })
-      const uploaded = await uploadResponse.json()
-      if (!uploadResponse.ok) throw new Error(uploaded.error || 'Upload failed')
+      const uploaded = await uploadVideo()
       const publicId = uploaded.publicId || uploaded.public_id
       projectId = uploaded.projectId || ''
       if (projectId) await fetch(`/api/projects/${projectId}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'processing' }) })
@@ -111,15 +117,16 @@ export function VideoCutter() {
       <p className="mt-8 text-xs font-semibold uppercase tracking-[0.2em] text-violet-300">ClipForge AI</p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">Cut a video into a clip</h1>
       <p className="mt-2 text-sm text-[#858894]">Upload any supported video and generate a hosted vertical clip without browser codec limitations.</p>
-      <p className="mt-2 text-xs text-[#777a86]">Videos are uploaded directly to Cloudinary for reliable MOV, MP4, WEBM, and HEVC processing.</p>
-      <label htmlFor="cutter-file" className="mt-8 flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-violet-300/30 bg-violet-400/[0.05] px-6 py-14 text-center hover:bg-violet-400/[0.09]">
+      <p className="mt-2 text-xs text-[#777a86]">Files and direct video URLs are sent to Cloudinary for MOV, MP4, WEBM, and HEVC processing.</p>
+      <div className="mt-8 rounded-2xl border border-white/[0.08] bg-[#111216] p-4"><label htmlFor="video-url" className="text-xs font-medium text-[#c7c8d0]">Or paste a direct video URL</label><input id="video-url" type="url" value={remoteUrl} onChange={(event) => { setRemoteUrl(event.target.value); if (event.target.value) { setFile(null); setFileUrl(''); setError('') } }} placeholder="https://cdn.example.com/video.mp4" className="mt-2 w-full rounded-xl border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none" /><p className="mt-2 text-xs text-[#777a86]">Use a direct MP4/MOV/WebM URL. A normal YouTube watch page is not a media file and cannot be fetched by Cloudinary.</p></div>
+      <label htmlFor="cutter-file" className="mt-4 flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-violet-300/30 bg-violet-400/[0.05] px-6 py-14 text-center hover:bg-violet-400/[0.09]">
         <Upload className="text-violet-300" />
         <span className="mt-3 text-sm font-medium">Choose a video</span>
         <span className="mt-1 text-xs text-[#777a86]">MOV, MP4, WEBM, HEVC, and more</span>
         <input id="cutter-file" type="file" accept="video/*,.mov,.m4v,.mp4,.webm,.avi,.mkv,.3gp" className="sr-only" onChange={(event) => chooseFile(event.target.files?.[0])} onInput={(event) => chooseFile(event.currentTarget.files?.[0])} />
       </label>
-      {file && <section className="mt-6 rounded-2xl border border-white/[0.08] bg-[#111216] p-5">
-        <video className="aspect-video w-full rounded-xl bg-black object-contain" src={fileUrl} controls onLoadedMetadata={(event) => { const next = event.currentTarget.duration; setDuration(next); setEnd(next) }} onError={() => setError('Preview unavailable for this codec, but Cloudinary can still process the original file.')} />
+      {(file || remoteUrl) && <section className="mt-6 rounded-2xl border border-white/[0.08] bg-[#111216] p-5">
+        {file && <video className="aspect-video w-full rounded-xl bg-black object-contain" src={fileUrl} controls onLoadedMetadata={(event) => { const next = event.currentTarget.duration; setDuration(next); setEnd(next) }} onError={() => setError('Preview unavailable for this codec, but Cloudinary can still process the original file.')} />}
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <label className="text-xs text-[#a8aab4]">Start time (minutes)<input type="number" min="0" max={Math.max(0, (end - 0.1) / 60)} step="0.1" value={Number((start / 60).toFixed(2))} onChange={(event) => setStart(Number(event.target.value) * 60)} className="mt-2 w-full rounded-xl border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none" /></label>
           <label className="text-xs text-[#a8aab4]">End time (minutes)<input type="number" min={Math.min(duration, start + 0.1) / 60} max={duration / 60} step="0.1" value={Number((end / 60).toFixed(2))} onChange={(event) => setEnd(Number(event.target.value) * 60)} className="mt-2 w-full rounded-xl border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none" /></label>
