@@ -16,7 +16,8 @@ export async function POST(request: Request) {
   const transformation = clips.map((clip, index) => {
     const start = Math.max(0, Number(clip.start) || 0)
     const url = `https://res.cloudinary.com/${cloudName}/video/upload/so_${start},du_${clipDuration},c_fill,ar_9:16,w_1080,h_1920,q_auto,f_mp4${effect}/${safePublicId}.mp4`
-    return { ...clip, index: index + 1, url }
+    const downloadUrl = `/api/cloudinary/download?publicId=${encodeURIComponent(publicId)}&start=${start}&duration=${clipDuration}`
+    return { ...clip, index: index + 1, url, downloadUrl }
   })
 
   return NextResponse.json({ clips: transformation })

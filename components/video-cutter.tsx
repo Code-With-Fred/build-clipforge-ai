@@ -17,7 +17,7 @@ export function VideoCutter() {
   const [command, setCommand] = useState('Create ten 1-minute shorts spread across the video')
   const [grayscale, setGrayscale] = useState(false)
   const [aiProcessing, setAiProcessing] = useState(false)
-  const [generatedClips, setGeneratedClips] = useState<Array<{ index: number; title: string; reason: string; url: string }>>([])
+  const [generatedClips, setGeneratedClips] = useState<Array<{ index: number; title: string; reason: string; url: string; downloadUrl: string }>>([])
 
   useEffect(() => {
     return () => {
@@ -46,18 +46,12 @@ export function VideoCutter() {
     if (!file || end <= start) return
     setProcessing(true); setProgress(10); setError(''); setOutputUrl('')
     try {
-      const configResponse = await fetch('/api/cloudinary/config')
-      const config = await configResponse.json()
-      if (!configResponse.ok) throw new Error(config.error || 'Cloudinary is not configured')
-
       const upload = new FormData()
       upload.append('file', file)
-      upload.append('upload_preset', config.uploadPreset)
-      upload.append('folder', 'clipforge/source')
       setProgress(25)
-      const uploadResponse = await fetch(`https://api.cloudinary.com/v1_1/${config.cloudName}/video/upload`, { method: 'POST', body: upload })
+      const uploadResponse = await fetch('/api/cloudinary/upload', { method: 'POST', body: upload })
       const uploaded = await uploadResponse.json()
-      if (!uploadResponse.ok) throw new Error(uploaded.error?.message || 'Upload failed')
+      if (!uploadResponse.ok) throw new Error(uploaded.error || 'Upload failed')
 
       setProgress(65)
       const clipRequest = new FormData()
@@ -70,7 +64,7 @@ export function VideoCutter() {
       const clip = await clipResponse.json()
       if (!clipResponse.ok) throw new Error(clip.error || 'Clip generation failed')
       setProgress(100)
-      setOutputUrl(clip.url)
+      setOutputUrl(clip.downloadUrl || clip.url)
     } catch (caught) {
       setError(caught instanceof Error && caught.message !== 'Failed to fetch' ? caught.message : 'Cloudinary upload could not be reached. Check the Cloudinary cloud name and unsigned upload preset.')
     } finally { setProcessing(false) }
@@ -80,18 +74,13 @@ export function VideoCutter() {
     if (!file) return
     setAiProcessing(true); setError(''); setGeneratedClips([]); setProgress(5)
     try {
-      const configResponse = await fetch('/api/cloudinary/config')
-      const config = await configResponse.json()
-      if (!configResponse.ok) throw new Error(config.error || 'Cloudinary is not configured')
       const upload = new FormData()
       upload.append('file', file)
-      upload.append('upload_preset', config.uploadPreset)
-      upload.append('folder', 'clipforge/source')
       setProgress(20)
-      const uploadResponse = await fetch(`https://api.cloudinary.com/v1_1/${config.cloudName}/video/upload`, { method: 'POST', body: upload })
+      const uploadResponse = await fetch('/api/cloudinary/upload', { method: 'POST', body: upload })
       const uploaded = await uploadResponse.json()
-      if (!uploadResponse.ok) throw new Error(uploaded.error?.message || 'Upload failed')
-      const publicId = uploaded.public_id
+      if (!uploadResponse.ok) throw new Error(uploaded.error || 'Upload failed')
+      const publicId = uploaded.publicId || uploaded.public_id
       const videoDuration = Number(uploaded.duration || duration)
       setProgress(45)
       const planResponse = await fetch('/api/ai/plan-shorts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ command, duration: videoDuration, clipDuration: 60 }) })
@@ -135,7 +124,7 @@ export function VideoCutter() {
           <textarea value={command} onChange={(event) => setCommand(event.target.value)} rows={3} className="mt-4 w-full resize-none rounded-xl border border-white/[0.1] bg-black/20 px-3 py-3 text-sm text-white outline-none" aria-label="AI short command" />
           <label className="mt-3 flex items-center gap-2 text-sm text-[#c7c8d0]"><input type="checkbox" checked={grayscale} onChange={(event) => setGrayscale(event.target.checked)} /> Apply black-and-white color grading</label>
           <Button onClick={createShorts} disabled={aiProcessing || processing || !file || !command.trim()} className="mt-4 rounded-xl bg-white text-black hover:bg-white/90">{aiProcessing ? `Creating shorts ${progress}%` : 'Create 10 shorts'}</Button>
-          {generatedClips.length > 0 && <div className="mt-5 grid gap-2 sm:grid-cols-2"><p className="sm:col-span-2 text-sm font-medium text-white">Your shorts are ready. Download them, then edit audio in CapCut.</p>{generatedClips.map((clip) => <a key={clip.index} href={clip.url} download={`clipforge-short-${clip.index}.mp4`} className="rounded-xl border border-white/[0.1] bg-white/[0.04] px-3 py-3 text-sm hover:bg-white/[0.08]"><span className="font-medium text-violet-200">Short {clip.index}: {clip.title}</span><span className="mt-1 block text-xs text-[#90929d]">Download MP4</span></a>)}</div>}
+          {generatedClips.length > 0 && <div className="mt-5 grid gap-2 sm:grid-cols-2"><p className="sm:col-span-2 text-sm font-medium text-white">Your shorts are ready. Download them, then edit audio in CapCut.</p>{generatedClips.map((clip) => <a key={clip.index} href={clip.downloadUrl || clip.url} download={`clipforge-short-${clip.index}.mp4`} className="rounded-xl border border-white/[0.1] bg-white/[0.04] px-3 py-3 text-sm hover:bg-white/[0.08]"><span className="font-medium text-violet-200">Short {clip.index}: {clip.title}</span><span className="mt-1 block text-xs text-[#90929d]">Download MP4</span></a>)}</div>}
         </div>
         {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
       </section>}
