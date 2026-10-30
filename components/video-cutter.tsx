@@ -1,30 +1,8 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Download, Scissors, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-
-declare global {
-  interface Window {
-    FFmpegWASM?: { FFmpeg: new () => any }
-  }
-}
-
-const CORE_BASE = '/ffmpeg'
-const FFMPEG_SCRIPT = '/ffmpeg/ffmpeg.js'
-
-function loadScript(src: string) {
-  return new Promise<void>((resolve, reject) => {
-    const existing = document.querySelector<HTMLScriptElement>(`script[data-ffmpeg-src="${src}"]`)
-    if (existing) { resolve(); return }
-    const script = document.createElement('script')
-    script.src = src
-    script.dataset.ffmpegSrc = src
-    script.onload = () => resolve()
-    script.onerror = () => reject(new Error(`Unable to load ${src}`))
-    document.head.appendChild(script)
-  })
-}
 
 export function VideoCutter() {
   const ffmpegRef = useRef<any>(null)
@@ -62,34 +40,34 @@ export function VideoCutter() {
 
   const cutVideo = async () => {
     if (!file || end <= start) return
-    setProcessing(true); setProgress(0); setError('')
+    setProcessing(true); setProgress(10); setError(''); setOutputUrl('')
     try {
-      if (!window.FFmpegWASM) await loadScript(FFMPEG_SCRIPT)
-      if (!window.FFmpegWASM) throw new Error('FFmpeg runtime unavailable')
-      const { FFmpeg } = window.FFmpegWASM
-      const fetchFile = async (source: File) => new Uint8Array(await source.arrayBuffer())
-      const ffmpeg = ffmpegRef.current ?? new FFmpeg()
-      ffmpegRef.current = ffmpeg
-      if (!ffmpeg.loaded) {
-        await ffmpeg.load({
-          coreURL: `${CORE_BASE}/ffmpeg-core.js`,
-          wasmURL: `${CORE_BASE}/ffmpeg-core.wasm`,
-        })
-      }
-      ffmpeg.on('progress', ({ progress: value }: { progress: number }) => setProgress(Math.round(value * 100)))
-      const extension = file.name.match(/\.[a-z0-9]+$/i)?.[0].toLowerCase() || '.video'
-      const inputName = `input${extension}`
-      try { await ffmpeg.deleteFile(inputName) } catch {}
-      try { await ffmpeg.deleteFile('clip.mp4') } catch {}
-      await ffmpeg.writeFile(inputName, await fetchFile(file))
-      await ffmpeg.exec(['-y', '-ss', String(start), '-i', inputName, '-t', String(end - start), '-c', 'copy', '-avoid_negative_ts', 'make_zero', 'clip.mp4'])
-      const data = await ffmpeg.readFile('clip.mp4')
-      const blob = new Blob([data as Uint8Array], { type: 'video/mp4' })
-      setOutputUrl(URL.createObjectURL(blob))
+      const configResponse = await fetch('/api/cloudinary/config')
+      const config = await configResponse.json()
+      if (!configResponse.ok) throw new Error(config.error || 'Cloudinary is not configured')
+
+      const upload = new FormData()
+      upload.append('file', file)
+      upload.append('upload_preset', config.uploadPreset)
+      upload.append('folder', 'clipforge/source')
+      setProgress(25)
+      const uploadResponse = await fetch(`https://api.cloudinary.com/v1_1/${config.cloudName}/video/upload`, { method: 'POST', body: upload })
+      const uploaded = await uploadResponse.json()
+      if (!uploadResponse.ok) throw new Error(uploaded.error?.message || 'Upload failed')
+
+      setProgress(65)
+      const clipRequest = new FormData()
+      clipRequest.append('publicId', uploaded.publicId)
+      clipRequest.append('start', String(start))
+      clipRequest.append('duration', String(end - start))
+      const clipResponse = await fetch('/api/cloudinary/clip', { method: 'POST', body: clipRequest })
+      const clip = await clipResponse.json()
+      if (!clipResponse.ok) throw new Error(clip.error || 'Clip generation failed')
+      setProgress(100)
+      setOutputUrl(clip.url)
     } catch (caught) {
-        setError(caught instanceof Error ? `Video processing failed: ${caught.message}` : 'Video processing failed. Please try again.')
-    }
-    finally { setProcessing(false) }
+      setError(caught instanceof Error ? caught.message : 'Video processing failed. Please try again.')
+    } finally { setProcessing(false) }
   }
 
   return <main className="min-h-screen bg-[#090a0d] px-5 py-10 text-[#f4f4f5] sm:px-8">
@@ -97,8 +75,8 @@ export function VideoCutter() {
       <a href="/" className="text-xs text-[#858894] transition-colors hover:text-white">← Back to dashboard</a>
       <p className="mt-8 text-xs font-semibold uppercase tracking-[0.2em] text-violet-300">ClipForge AI</p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">Cut a video into a clip</h1>
-      <p className="mt-2 text-sm text-[#858894]">Everything runs in your browser. Your original video is not uploaded.</p>
-      <p className="mt-2 text-xs text-[#777a86]">Browser preview is optional. The cutter processes the original file with FFmpeg, including MOV and HEVC sources when the browser can load the FFmpeg runtime.</p>
+      <p className="mt-2 text-sm text-[#858894]">Upload any supported video and generate a hosted vertical clip without browser codec limitations.</p>
+      <p className="mt-2 text-xs text-[#777a86]">Videos are uploaded directly to Cloudinary for reliable MOV, MP4, WEBM, and HEVC processing.</p>
       <label htmlFor="cutter-file" className="mt-8 flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-violet-300/30 bg-violet-400/[0.05] px-6 py-14 text-center hover:bg-violet-400/[0.09]">
         <Upload className="text-violet-300" />
         <span className="mt-3 text-sm font-medium">Choose a video</span>
