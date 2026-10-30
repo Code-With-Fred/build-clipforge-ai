@@ -7,8 +7,8 @@ export async function POST(request: Request) {
   const clipDuration = Number(body.clipDuration)
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME
 
-  if (!cloudName || typeof publicId !== "string" || !publicId || clips.length !== 10 || !Number.isFinite(clipDuration)) {
-    return NextResponse.json({ error: "Provide one uploaded video and exactly ten clip positions." }, { status: 400 })
+  if (!cloudName || typeof publicId !== "string" || !publicId || clips.length < 1 || clips.length > 300 || !Number.isFinite(clipDuration)) {
+    return NextResponse.json({ error: "Provide one uploaded video and between one and 300 clip positions." }, { status: 400 })
   }
 
   const safePublicId = publicId.split("/").map(encodeURIComponent).join("/")

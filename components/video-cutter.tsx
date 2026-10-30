@@ -14,7 +14,6 @@ export function VideoCutter() {
   const [progress, setProgress] = useState(0)
   const [outputUrl, setOutputUrl] = useState('')
   const [error, setError] = useState('')
-  const [command, setCommand] = useState('Create ten 1-minute shorts spread across the video')
   const [grayscale, setGrayscale] = useState(false)
   const [aiProcessing, setAiProcessing] = useState(false)
   const [generatedClips, setGeneratedClips] = useState<Array<{ index: number; title: string; reason: string; url: string; downloadUrl: string }>>([])
@@ -83,11 +82,15 @@ export function VideoCutter() {
       const publicId = uploaded.publicId || uploaded.public_id
       const videoDuration = Number(uploaded.duration || duration)
       setProgress(45)
-      const planResponse = await fetch('/api/ai/plan-shorts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ command, duration: videoDuration, clipDuration: 60 }) })
-      const plan = await planResponse.json()
-      if (!planResponse.ok) throw new Error(plan.error || 'AI could not plan the shorts')
+      const clipCount = Math.floor(videoDuration / 60)
+      if (clipCount < 1) throw new Error('The video must be at least one minute long.')
+      const clips = Array.from({ length: clipCount }, (_, index) => ({
+        start: index * 60,
+        title: `Minute ${index + 1}`,
+        reason: 'Consecutive one-minute segment from the uploaded video.',
+      }))
       setProgress(70)
-      const clipsResponse = await fetch('/api/cloudinary/shorts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ publicId, clips: plan.clips, clipDuration: plan.clipDuration, grayscale }) })
+      const clipsResponse = await fetch('/api/cloudinary/shorts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ publicId, clips, clipDuration: 60, grayscale }) })
       const result = await clipsResponse.json()
       if (!clipsResponse.ok) throw new Error(result.error || 'Cloudinary could not create the shorts')
       setGeneratedClips(result.clips)
@@ -119,11 +122,10 @@ export function VideoCutter() {
         <div className="mt-5 flex flex-wrap items-center gap-3"><Button onClick={cutVideo} disabled={processing || aiProcessing || end <= start} className="gap-2 rounded-xl bg-violet-500 hover:bg-violet-400"><Scissors data-icon="inline-start" />{processing ? `Cutting ${progress}%` : 'Cut video'}</Button>{outputUrl && <a href={outputUrl} download="clipforge-clip.mp4"><Button variant="outline" className="gap-2 rounded-xl border-white/[0.1] bg-transparent"><Download data-icon="inline-start" /> Download clip</Button></a>}</div>
         <div className="mt-8 rounded-2xl border border-violet-300/20 bg-violet-400/[0.05] p-5">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-violet-200">AI short batch</p>
-          <h2 className="mt-2 text-lg font-semibold">Create ten one-minute shorts</h2>
-          <p className="mt-1 text-sm text-[#9b9da7]">Describe how you want the moments selected. AI chooses ten positions, then Cloudinary creates downloadable vertical clips.</p>
-          <textarea value={command} onChange={(event) => setCommand(event.target.value)} rows={3} className="mt-4 w-full resize-none rounded-xl border border-white/[0.1] bg-black/20 px-3 py-3 text-sm text-white outline-none" aria-label="AI short command" />
-          <label className="mt-3 flex items-center gap-2 text-sm text-[#c7c8d0]"><input type="checkbox" checked={grayscale} onChange={(event) => setGrayscale(event.target.checked)} /> Apply black-and-white color grading</label>
-          <Button onClick={createShorts} disabled={aiProcessing || processing || !file || !command.trim()} className="mt-4 rounded-xl bg-white text-black hover:bg-white/90">{aiProcessing ? `Creating shorts ${progress}%` : 'Create 10 shorts'}</Button>
+          <h2 className="mt-2 text-lg font-semibold">Split the full video into one-minute shorts</h2>
+          <p className="mt-1 text-sm text-[#9b9da7]">A one-hour video creates 60 consecutive one-minute clips at once. Any leftover seconds are skipped so every download is exactly one minute.</p>
+          <label className="mt-4 flex items-center gap-2 text-sm text-[#c7c8d0]"><input type="checkbox" checked={grayscale} onChange={(event) => setGrayscale(event.target.checked)} /> Apply black-and-white color grading</label>
+          <Button onClick={createShorts} disabled={aiProcessing || processing || !file} className="mt-4 rounded-xl bg-white text-black hover:bg-white/90">{aiProcessing ? `Creating shorts ${progress}%` : 'Create all 1-minute shorts'}</Button>
           {generatedClips.length > 0 && <div className="mt-5 grid gap-2 sm:grid-cols-2"><p className="sm:col-span-2 text-sm font-medium text-white">Your shorts are ready. Download them, then edit audio in CapCut.</p>{generatedClips.map((clip) => <a key={clip.index} href={clip.downloadUrl || clip.url} download={`clipforge-short-${clip.index}.mp4`} className="rounded-xl border border-white/[0.1] bg-white/[0.04] px-3 py-3 text-sm hover:bg-white/[0.08]"><span className="font-medium text-violet-200">Short {clip.index}: {clip.title}</span><span className="mt-1 block text-xs text-[#90929d]">Download MP4</span></a>)}</div>}
         </div>
         {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
