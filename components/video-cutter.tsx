@@ -9,6 +9,7 @@ const CORE_BASE = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd'
 export function VideoCutter() {
   const ffmpegRef = useRef<any>(null)
   const [file, setFile] = useState<File | null>(null)
+  const [fileUrl, setFileUrl] = useState('')
   const [duration, setDuration] = useState(0)
   const [start, setStart] = useState(0)
   const [end, setEnd] = useState(0)
@@ -17,12 +18,23 @@ export function VideoCutter() {
   const [outputUrl, setOutputUrl] = useState('')
   const [error, setError] = useState('')
 
-  useEffect(() => () => { if (outputUrl) URL.revokeObjectURL(outputUrl) }, [outputUrl])
+  useEffect(() => {
+    return () => {
+      if (outputUrl) URL.revokeObjectURL(outputUrl)
+      if (fileUrl) URL.revokeObjectURL(fileUrl)
+    }
+  }, [fileUrl, outputUrl])
 
   const chooseFile = (nextFile: File | undefined) => {
     if (!nextFile) return
     if (!nextFile.type.startsWith('video/')) { setError('Choose a video file.'); return }
-    setError(''); setOutputUrl(''); setFile(nextFile); setStart(0); setEnd(0)
+    setError('')
+    setOutputUrl('')
+    setFile(nextFile)
+    setFileUrl(URL.createObjectURL(nextFile))
+    setDuration(0)
+    setStart(0)
+    setEnd(0)
   }
 
   const cutVideo = async () => {
@@ -45,7 +57,7 @@ export function VideoCutter() {
       }
       ffmpeg.on('progress', ({ progress: value }: { progress: number }) => setProgress(Math.round(value * 100)))
       await ffmpeg.writeFile('input.mp4', await fetchFile(file))
-      await ffmpeg.exec(['-ss', String(start), '-i', 'input.mp4', '-t', String(end - start), '-c', 'copy', 'clip.mp4'])
+      await ffmpeg.exec(['-ss', String(start), '-i', 'input.mp4', '-t', String(end - start), '-c:v', 'libx264', '-c:a', 'aac', '-movflags', '+faststart', 'clip.mp4'])
       const data = await ffmpeg.readFile('clip.mp4')
       const blob = new Blob([data as Uint8Array], { type: 'video/mp4' })
       setOutputUrl(URL.createObjectURL(blob))
@@ -55,7 +67,8 @@ export function VideoCutter() {
 
   return <main className="min-h-screen bg-[#090a0d] px-5 py-10 text-[#f4f4f5] sm:px-8">
     <div className="mx-auto max-w-3xl">
-      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-300">ClipForge AI</p>
+      <a href="/" className="text-xs text-[#858894] transition-colors hover:text-white">← Back to dashboard</a>
+      <p className="mt-8 text-xs font-semibold uppercase tracking-[0.2em] text-violet-300">ClipForge AI</p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">Cut a video into a clip</h1>
       <p className="mt-2 text-sm text-[#858894]">Everything runs in your browser. Your original video is not uploaded.</p>
       <label htmlFor="cutter-file" className="mt-8 flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-violet-300/30 bg-violet-400/[0.05] px-6 py-14 text-center hover:bg-violet-400/[0.09]">
@@ -65,7 +78,7 @@ export function VideoCutter() {
         <input id="cutter-file" type="file" accept="video/*" className="sr-only" onChange={(event) => chooseFile(event.target.files?.[0])} />
       </label>
       {file && <section className="mt-6 rounded-2xl border border-white/[0.08] bg-[#111216] p-5">
-        <video className="aspect-video w-full rounded-xl bg-black object-contain" src={URL.createObjectURL(file)} controls onLoadedMetadata={(event) => { const next = event.currentTarget.duration; setDuration(next); setEnd(next) }} />
+        <video className="aspect-video w-full rounded-xl bg-black object-contain" src={fileUrl} controls onLoadedMetadata={(event) => { const next = event.currentTarget.duration; setDuration(next); setEnd(next) }} />
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <label className="text-xs text-[#a8aab4]">Start seconds<input type="number" min="0" max={Math.max(0, end - 0.1)} step="0.1" value={start} onChange={(event) => setStart(Number(event.target.value))} className="mt-2 w-full rounded-xl border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none" /></label>
           <label className="text-xs text-[#a8aab4]">End seconds<input type="number" min={Math.min(duration, start + 0.1)} max={duration} step="0.1" value={end} onChange={(event) => setEnd(Number(event.target.value))} className="mt-2 w-full rounded-xl border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none" /></label>
