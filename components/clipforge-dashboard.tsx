@@ -32,11 +32,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
-const projects = [
-  { name: 'The future of solo business', date: 'Today, 9:42 AM', duration: '48:12', clips: 12, status: 'Ready', gradient: 'from-[#1d2538] via-[#535b7b] to-[#a7aec2]', initial: 'TF' },
-  { name: 'Founder stories — episode 04', date: 'Yesterday, 4:18 PM', duration: '36:48', clips: 8, status: 'Processing', gradient: 'from-[#3d1f49] via-[#9d598c] to-[#f0bd9e]', initial: 'FS' },
-  { name: 'Product launch keynote', date: 'Oct 18, 2026', duration: '1:12:06', clips: 24, status: 'Ready', gradient: 'from-[#123b42] via-[#33787c] to-[#d1dfb7]', initial: 'PL' },
-]
+const projects: Array<{ name: string; date: string; duration: string; clips: number; status: string; gradient: string; initial: string }> = []
 
 const nav = [
   { label: 'Overview', icon: Gauge },
