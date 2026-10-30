@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
-import { projects, uploads } from "@/lib/db/schema"
+import { project, upload } from "@/lib/db/schema"
 import { headers } from "next/headers"
 
 const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024
@@ -47,22 +47,23 @@ export async function POST(request: Request) {
   const session = await auth.api.getSession({ headers: await headers() })
   let projectId: string | undefined
   if (session?.user?.id) {
-    const [project] = await db.insert(projects).values({
+    const [createdProject] = await db.insert(project).values({
       id: crypto.randomUUID(),
       userId: session.user.id,
       name: file.name.replace(/\.[^.]+$/, ""),
       status: "uploaded",
-    }).returning({ id: projects.id })
-    projectId = project.id
-    await db.insert(uploads).values({
+      duration: Math.round(result.duration ?? 0),
+      sourcePathname: result.public_id,
+    }).returning({ id: project.id })
+    projectId = createdProject.id
+    await db.insert(upload).values({
       id: crypto.randomUUID(),
       projectId,
       userId: session.user.id,
       pathname: result.public_id,
       filename: file.name,
-      mimeType: file.type || "video/mp4",
-      sizeBytes: file.size,
-      status: "ready",
+      contentType: file.type || "video/mp4",
+      size: file.size,
     })
   }
 
