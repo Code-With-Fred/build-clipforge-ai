@@ -5,7 +5,6 @@ import { Download, Scissors, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 export function VideoCutter() {
-  const ffmpegRef = useRef<any>(null)
   const [file, setFile] = useState<File | null>(null)
   const [fileUrl, setFileUrl] = useState('')
   const [duration, setDuration] = useState(0)
@@ -29,6 +28,7 @@ export function VideoCutter() {
     if (!looksLikeVideo) { setError('Choose a supported video file.'); return }
     setError('')
     setOutputUrl('')
+    if (fileUrl) URL.revokeObjectURL(fileUrl)
     setFile(nextFile)
     setFileUrl(URL.createObjectURL(nextFile))
     // FFmpeg probes the source during processing, so browser preview support is not required.
@@ -80,8 +80,8 @@ export function VideoCutter() {
       <label htmlFor="cutter-file" className="mt-8 flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-violet-300/30 bg-violet-400/[0.05] px-6 py-14 text-center hover:bg-violet-400/[0.09]">
         <Upload className="text-violet-300" />
         <span className="mt-3 text-sm font-medium">Choose a video</span>
-        <span className="mt-1 text-xs text-[#777a86]">MP4, MOV, WEBM, or other browser-supported video</span>
-        <input id="cutter-file" type="file" accept="video/*" className="sr-only" onChange={(event) => chooseFile(event.target.files?.[0])} />
+        <span className="mt-1 text-xs text-[#777a86]">MOV, MP4, WEBM, HEVC, and more</span>
+        <input id="cutter-file" type="file" accept="video/*,.mov,.m4v,.mp4,.webm,.avi,.mkv,.3gp" className="sr-only" onChange={(event) => chooseFile(event.target.files?.[0])} onInput={(event) => chooseFile(event.currentTarget.files?.[0])} />
       </label>
       {file && <section className="mt-6 rounded-2xl border border-white/[0.08] bg-[#111216] p-5">
         <video className="aspect-video w-full rounded-xl bg-black object-contain" src={fileUrl} controls onLoadedMetadata={(event) => { const next = event.currentTarget.duration; setDuration(next); setEnd(next) }} onError={() => setError('Preview unavailable for this codec. You can still cut the original file with FFmpeg below.')} />
