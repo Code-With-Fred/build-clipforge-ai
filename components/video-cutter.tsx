@@ -66,7 +66,7 @@ export function VideoCutter() {
       setProgress(100)
       setOutputUrl(clip.url)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Video processing failed. Please try again.')
+      setError(caught instanceof Error && caught.message !== 'Failed to fetch' ? caught.message : 'Cloudinary upload could not be reached. Check the Cloudinary cloud name and unsigned upload preset.')
     } finally { setProcessing(false) }
   }
 
@@ -84,7 +84,7 @@ export function VideoCutter() {
         <input id="cutter-file" type="file" accept="video/*,.mov,.m4v,.mp4,.webm,.avi,.mkv,.3gp" className="sr-only" onChange={(event) => chooseFile(event.target.files?.[0])} onInput={(event) => chooseFile(event.currentTarget.files?.[0])} />
       </label>
       {file && <section className="mt-6 rounded-2xl border border-white/[0.08] bg-[#111216] p-5">
-        <video className="aspect-video w-full rounded-xl bg-black object-contain" src={fileUrl} controls onLoadedMetadata={(event) => { const next = event.currentTarget.duration; setDuration(next); setEnd(next) }} onError={() => setError('Preview unavailable for this codec. You can still cut the original file with FFmpeg below.')} />
+        <video className="aspect-video w-full rounded-xl bg-black object-contain" src={fileUrl} controls onLoadedMetadata={(event) => { const next = event.currentTarget.duration; setDuration(next); setEnd(next) }} onError={() => setError('Preview unavailable for this codec, but Cloudinary can still process the original file.')} />
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <label className="text-xs text-[#a8aab4]">Start seconds<input type="number" min="0" max={Math.max(0, end - 0.1)} step="0.1" value={start} onChange={(event) => setStart(Number(event.target.value))} className="mt-2 w-full rounded-xl border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none" /></label>
           <label className="text-xs text-[#a8aab4]">End seconds<input type="number" min={Math.min(duration, start + 0.1)} max={duration} step="0.1" value={end} onChange={(event) => setEnd(Number(event.target.value))} className="mt-2 w-full rounded-xl border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none" /></label>
