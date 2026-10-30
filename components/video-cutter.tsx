@@ -72,6 +72,7 @@ export function VideoCutter() {
   const createShorts = async () => {
     if (!file) return
     setAiProcessing(true); setError(''); setGeneratedClips([]); setProgress(5)
+    let projectId = ''
     try {
       const upload = new FormData()
       upload.append('file', file)
@@ -80,6 +81,8 @@ export function VideoCutter() {
       const uploaded = await uploadResponse.json()
       if (!uploadResponse.ok) throw new Error(uploaded.error || 'Upload failed')
       const publicId = uploaded.publicId || uploaded.public_id
+      projectId = uploaded.projectId || ''
+      if (projectId) await fetch(`/api/projects/${projectId}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'processing' }) })
       const videoDuration = Number(uploaded.duration || duration)
       setProgress(45)
       const clipCount = Math.floor(videoDuration / 60)
@@ -94,8 +97,10 @@ export function VideoCutter() {
       const result = await clipsResponse.json()
       if (!clipsResponse.ok) throw new Error(result.error || 'Cloudinary could not create the shorts')
       setGeneratedClips(result.clips)
+      if (projectId) await fetch(`/api/projects/${projectId}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'ready' }) })
       setProgress(100)
     } catch (caught) {
+      if (projectId) await fetch(`/api/projects/${projectId}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'failed' }) })
       setError(caught instanceof Error && caught.message !== 'Failed to fetch' ? caught.message : 'The AI short workflow could not be reached. Check Cloudinary and AI Gateway settings.')
     } finally { setAiProcessing(false) }
   }
