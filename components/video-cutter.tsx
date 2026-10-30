@@ -1,10 +1,30 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Download, Loader2, Scissors, Upload } from 'lucide-react'
+import { Download, Scissors, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
+declare global {
+  interface Window {
+    FFmpegWASM?: { FFmpeg: new () => any }
+  }
+}
+
 const CORE_BASE = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd'
+const FFMPEG_SCRIPT = '/ffmpeg/ffmpeg.js'
+
+function loadScript(src: string) {
+  return new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>(`script[data-ffmpeg-src="${src}"]`)
+    if (existing) { resolve(); return }
+    const script = document.createElement('script')
+    script.src = src
+    script.dataset.ffmpegSrc = src
+    script.onload = () => resolve()
+    script.onerror = () => reject(new Error(`Unable to load ${src}`))
+    document.head.appendChild(script)
+  })
+}
 
 export function VideoCutter() {
   const ffmpegRef = useRef<any>(null)
@@ -44,12 +64,11 @@ export function VideoCutter() {
     if (!file || end <= start) return
     setProcessing(true); setProgress(0); setError('')
     try {
-      const ffmpegModuleUrl = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js'
-      const utilModuleUrl = 'https://unpkg.com/@ffmpeg/util@0.12.2/dist/esm/index.js'
-      const [{ FFmpeg }, { fetchFile, toBlobURL }] = await Promise.all([
-        import(/* webpackIgnore: true */ ffmpegModuleUrl),
-        import(/* webpackIgnore: true */ utilModuleUrl),
-      ])
+      if (!window.FFmpegWASM) await loadScript(FFMPEG_SCRIPT)
+      if (!window.FFmpegWASM) throw new Error('FFmpeg runtime unavailable')
+      const { FFmpeg } = window.FFmpegWASM
+      const fetchFile = async (source: File) => new Uint8Array(await source.arrayBuffer())
+      const toBlobURL = async (url: string, mime: string) => URL.createObjectURL(new Blob([await (await fetch(url)).arrayBuffer()], { type: mime }))
       const ffmpeg = ffmpegRef.current ?? new FFmpeg()
       ffmpegRef.current = ffmpeg
       if (!ffmpeg.loaded) {
@@ -65,7 +84,9 @@ export function VideoCutter() {
       const data = await ffmpeg.readFile('clip.mp4')
       const blob = new Blob([data as Uint8Array], { type: 'video/mp4' })
       setOutputUrl(URL.createObjectURL(blob))
-    } catch { setError('The video could not be cut in this browser. Try an MP4 or WEBM file.') }
+    } catch (caught) {
+        setError(caught instanceof Error ? `Video processing failed: ${caught.message}` : 'Video processing failed. Please try again.')
+    }
     finally { setProcessing(false) }
   }
 
