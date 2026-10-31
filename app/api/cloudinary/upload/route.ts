@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server"
+
+export const runtime = "nodejs"
+export const maxDuration = 300
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { project, upload } from "@/lib/db/schema"

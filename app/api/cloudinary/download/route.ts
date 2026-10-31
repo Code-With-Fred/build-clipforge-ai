@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server"
 
+export const runtime = "nodejs"
+export const maxDuration = 300
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const publicId = searchParams.get("publicId")
