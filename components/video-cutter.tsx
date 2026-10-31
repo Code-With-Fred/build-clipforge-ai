@@ -56,7 +56,7 @@ export function VideoCutter() {
   }
 
   const cutVideo = async () => {
-    if (!file || end <= start) return
+    if ((!file && !remoteUrl.trim()) || end <= start) return
     setProcessing(true); setProgress(10); setError(''); setOutputUrl('')
     try {
       setProgress(25)
@@ -80,7 +80,7 @@ export function VideoCutter() {
   }
 
   const createShorts = async () => {
-    if (!file) return
+    if (!file && !remoteUrl.trim()) return
     setAiProcessing(true); setError(''); setGeneratedClips([]); setProgress(5)
     let projectId = ''
     try {
@@ -137,7 +137,7 @@ export function VideoCutter() {
           <h2 className="mt-2 text-lg font-semibold">Split the full video into one-minute shorts</h2>
           <p className="mt-1 text-sm text-[#9b9da7]">A one-hour video creates 60 consecutive one-minute clips at once. Any leftover seconds are skipped so every download is exactly one minute.</p>
           <label className="mt-4 flex items-center gap-2 text-sm text-[#c7c8d0]"><input type="checkbox" checked={grayscale} onChange={(event) => setGrayscale(event.target.checked)} /> Apply black-and-white color grading</label>
-          <Button onClick={createShorts} disabled={aiProcessing || processing || !file} className="mt-4 rounded-xl bg-white text-black hover:bg-white/90">{aiProcessing ? `Creating shorts ${progress}%` : 'Create all 1-minute shorts'}</Button>
+          <Button onClick={createShorts} disabled={aiProcessing || processing || (!file && !remoteUrl.trim())} className="mt-4 rounded-xl bg-white text-black hover:bg-white/90">{aiProcessing ? `Creating shorts ${progress}%` : 'Create all 1-minute shorts'}</Button>
           {generatedClips.length > 0 && <div className="mt-5 grid gap-2 sm:grid-cols-2"><p className="sm:col-span-2 text-sm font-medium text-white">Your shorts are ready. Download them, then edit audio in CapCut.</p>{generatedClips.map((clip) => <a key={clip.index} href={clip.downloadUrl || clip.url} download={`clipforge-short-${clip.index}.mp4`} className="rounded-xl border border-white/[0.1] bg-white/[0.04] px-3 py-3 text-sm hover:bg-white/[0.08]"><span className="font-medium text-violet-200">Short {clip.index}: {clip.title}</span><span className="mt-1 block text-xs text-[#90929d]">Download MP4</span></a>)}</div>}
         </div>
         {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
