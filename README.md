@@ -22,8 +22,9 @@ Environment variables:
 | `CLOUDINARY_CLOUD_NAME` | Your cloud name |
 | `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | Sign browser uploads and render jobs (secret stays server-side) |
 | `CLOUDINARY_URL` | Optional: `cloudinary://key:secret@cloud` instead of the three variables above |
-| `AI_GATEWAY_API_KEY` | Vercel AI Gateway (automatic on Vercel through OIDC) |
-| `GROQ_API_KEY` | Recommended, **free**: automatic transcription (Whisper large-v3-turbo; free tier ≈ 8 h of audio/day, no card) for captions, hooks, AI-picked moments and descriptions. Get one at console.groq.com |
+| `AI_GATEWAY_API_KEY` | Optional: Vercel AI Gateway, only used when `GROQ_API_KEY` is not set or `CLIPFORGE_AI_MODEL` is set (needs a card on file in Vercel) |
+| `GROQ_API_KEY` | Recommended, **free** (no card): transcription with Whisper large-v3-turbo **and** AI moment picking, titles, hooks and descriptions with Groq's free chat models. Get one at console.groq.com |
+| `CLIPFORGE_GROQ_MODEL` | Optional: pin a Groq chat model (default tries `openai/gpt-oss-120b`, then smaller fallbacks) |
 | `OPENAI_API_KEY` | Paid alternative to Groq for transcription (~$0.36 per hour of video) |
 | `CLIPFORGE_AI_MODEL` | Optional model override (default `anthropic/claude-sonnet-4.6`) |
 

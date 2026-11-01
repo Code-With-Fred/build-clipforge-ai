@@ -216,9 +216,14 @@ export function transcriptForPrompt(segments: TranscriptSegment[], maxChars = 18
     if (last && segment.start - last.start < 15) last.text += ` ${segment.text}`
     else buckets.push({ ...segment })
   }
+  // Over budget: shorten every bucket evenly so the whole video stays covered
+  // (rather than cutting off the end), which matters for small free-tier context limits.
+  const full = buckets.reduce((total, bucket) => total + bucket.text.length + 10, 0)
+  const perBucket = full > maxChars ? Math.max(20, Math.floor(maxChars / Math.max(1, buckets.length)) - 10) : Infinity
   let output = ''
   for (const bucket of buckets) {
-    const line = `[${Math.floor(bucket.start)}s] ${bucket.text}\n`
+    const text = bucket.text.length > perBucket ? `${bucket.text.slice(0, perBucket).replace(/\s+\S*$/, '')}…` : bucket.text
+    const line = `[${Math.floor(bucket.start)}s] ${text}\n`
     if (output.length + line.length > maxChars) break
     output += line
   }
