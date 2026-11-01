@@ -7,6 +7,8 @@ export type TimedWord = { start: number; end: number; text: string }
 export type CaptionCue = { start: number; end: number; text: string }
 
 const MAX_WORDS_PER_CUE = 3
+// Keeps every caption on one short, centered line (about 60% of the frame width).
+const MAX_CHARS_PER_CUE = 16
 const MAX_CUE_SECONDS = 1.6
 const MIN_CUE_SECONDS = 0.35
 
@@ -54,7 +56,8 @@ export function buildClipCues(
   for (const word of words) {
     const tooLong = current.length && word.end - current[0].start > MAX_CUE_SECONDS
     const gap = current.length && word.start - current[current.length - 1].end > 0.6
-    if (current.length >= MAX_WORDS_PER_CUE || tooLong || gap) flush()
+    const tooWide = current.length && [...current, word].map((item) => item.text).join(' ').length > MAX_CHARS_PER_CUE
+    if (current.length >= MAX_WORDS_PER_CUE || tooLong || gap || tooWide) flush()
     current.push(word)
     if (/[.!?]$/.test(word.text)) flush()
   }

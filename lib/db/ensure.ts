@@ -32,6 +32,9 @@ export function ensureClipTable() {
     ALTER TABLE "clip" ADD COLUMN IF NOT EXISTS "captions" text NOT NULL DEFAULT '';
     ALTER TABLE "clip" ADD COLUMN IF NOT EXISTS "finishing" text NOT NULL DEFAULT '';
     ALTER TABLE "clip" ADD COLUMN IF NOT EXISTS "detail" text NOT NULL DEFAULT '';
+    ALTER TABLE "clip" ADD COLUMN IF NOT EXISTS "youtubeCheck" text NOT NULL DEFAULT 'pending';
+    ALTER TABLE "project" ADD COLUMN IF NOT EXISTS "rightsSource" text;
+    ALTER TABLE "project" ADD COLUMN IF NOT EXISTS "rightsProof" text;
   `).then(() => undefined, (error) => { ready = null; throw error })
   return ready
 }

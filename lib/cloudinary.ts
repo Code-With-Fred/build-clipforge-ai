@@ -164,11 +164,11 @@ export function uploadCaptions(config: CloudinaryConfig, srt: string, publicId: 
 export function finishingTransformation(options: { captionsPublicId?: string; hookText?: string }) {
   const steps: string[] = []
   if (options.captionsPublicId) {
-    steps.push(`l_subtitles:Arial_64_bold:${options.captionsPublicId.replace(/\//g, ':')},co_white,b_rgb:000000aa`)
-    steps.push('fl_layer_apply,g_south,y_480')
+    steps.push(`l_subtitles:Arial_46_bold:${options.captionsPublicId.replace(/\//g, ':')},co_white,b_rgb:000000aa`)
+    steps.push('fl_layer_apply,g_south,y_520')
   }
   if (options.hookText) {
-    steps.push(`l_text:Arial_68_bold_center:${cloudinaryText(options.hookText)},co_white,b_rgb:000000c0,c_fit,w_940`)
+    steps.push(`l_text:Arial_50_bold_center:${cloudinaryText(options.hookText)},co_white,b_rgb:000000c0,c_fit,w_880`)
     steps.push('fl_layer_apply,g_north,y_240,so_0,eo_3')
   }
   steps.push('q_auto,vc_h264,ac_aac')

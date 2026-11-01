@@ -53,6 +53,9 @@ export const project = pgTable('project', {
   status: text('status').notNull().default('draft'),
   duration: integer('duration').notNull().default(0),
   sourcePathname: text('sourcePathname'),
+  // Rights declared at upload: 'own' | 'permission' (proof = campaign/permission link).
+  rightsSource: text('rightsSource'),
+  rightsProof: text('rightsProof'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
   updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 })
@@ -88,6 +91,8 @@ export const clip = pgTable('clip', {
   captions: text('captions').notNull().default(''),
   finishing: text('finishing').notNull().default(''),
   detail: text('detail').notNull().default(''),
+  // Result of YouTube Studio's copyright "Checks" step: 'pending' | 'passed' | 'claimed'.
+  youtubeCheck: text('youtubeCheck').notNull().default('pending'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
   updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 })

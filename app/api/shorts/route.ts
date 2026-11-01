@@ -37,7 +37,12 @@ const requestSchema = z.object({
   captions: z.boolean().default(true),
   hook: z.boolean().default(true),
   sourceCredit: z.string().trim().max(300).optional(),
-  rightsConfirmed: z.literal(true, { message: 'Confirm that you own this video or have permission to clip it.' }),
+  // Where the right to clip comes from. "Not sure" is not accepted: those clips get claimed.
+  rightsSource: z.enum(['own', 'permission'], { message: 'Choose where your rights to clip this video come from.' }),
+  rightsProof: z.string().trim().max(500).optional(),
+}).refine((value) => value.rightsSource !== 'permission' || Boolean(value.rightsProof), {
+  message: 'Add the clipping campaign or permission link.',
+  path: ['rightsProof'],
 })
 
 export async function POST(request: Request) {
@@ -45,7 +50,7 @@ export async function POST(request: Request) {
   if (!config) return NextResponse.json({ error: MISSING_CONFIG_MESSAGE }, { status: 503 })
 
   const parsed = requestSchema.safeParse(await request.json().catch(() => null))
-  if (!parsed.success) return NextResponse.json({ error: 'Invalid shorts request.', issues: parsed.error.issues }, { status: 400 })
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message || 'Invalid shorts request.', issues: parsed.error.issues }, { status: 400 })
   const input = parsed.data
   const sources = input.sources ?? (input.publicId ? [{ publicId: input.publicId, bytes: input.bytes }] : [])
   if (!sources.length) return NextResponse.json({ error: 'No uploaded video was provided.' }, { status: 400 })
@@ -147,6 +152,8 @@ export async function POST(request: Request) {
     status: 'processing',
     duration: Math.round(videoDuration),
     sourcePathname: sources.map((source) => source.publicId).join(','),
+    rightsSource: input.rightsSource,
+    rightsProof: input.rightsProof || null,
   })
   await db.insert(upload).values(sources.map((source, index) => ({
     id: randomUUID(),
