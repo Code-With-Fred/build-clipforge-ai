@@ -53,9 +53,13 @@ function fatal(message: string) {
 
 /** Upload straight from the browser to Cloudinary in 20 MB chunks (bypasses Vercel's 4.5 MB body limit). */
 async function uploadToCloudinary(source: File | string, onProgress: (fraction: number) => void) {
-  const configResponse = await fetch('/api/cloudinary/config')
-  const config = await readJson(configResponse)
-  if (!configResponse.ok) throw new Error(String(config.error || 'Cloudinary is not configured.'))
+  const loadSignature = async () => {
+    const response = await fetch('/api/cloudinary/config', { cache: 'no-store' })
+    const body = await readJson(response)
+    if (!response.ok) throw new Error(String(body.error || 'Cloudinary is not configured.'))
+    return { ...body, loadedAt: Date.now() } as Record<string, unknown>
+  }
+  let config = await loadSignature()
   const endpoint = `https://api.cloudinary.com/v1_1/${config.cloudName}/video/upload`
 
   const send = async (body: FormData, headers?: Record<string, string>) => {
@@ -65,15 +69,17 @@ async function uploadToCloudinary(source: File | string, onProgress: (fraction: 
     if (!response.ok) throw new Error(cloudinaryMessage(result, `Upload failed (${response.status}).`))
     return result
   }
-  const baseForm = () => {
+  const baseForm = async () => {
+    // Cloudinary rejects signatures older than ~1 hour; long uploads re-sign as they go.
+    if (Date.now() - Number(config.loadedAt) > 40 * 60 * 1000) config = await loadSignature()
     const form = new FormData()
-    form.append('upload_preset', String(config.uploadPreset))
-    form.append('folder', 'clipforge/source')
+    // Signed by the server (/api/cloudinary/config); no upload preset needed.
+    for (const key of ['api_key', 'timestamp', 'signature', 'folder'] as const) form.append(key, String(config[key]))
     return form
   }
 
   if (typeof source === 'string') {
-    const form = baseForm()
+    const form = await baseForm()
     form.append('file', source)
     onProgress(0.5)
     const result = await withRetry(() => send(form), 2)
@@ -85,8 +91,8 @@ async function uploadToCloudinary(source: File | string, onProgress: (fraction: 
   let result: Record<string, unknown> = {}
   for (let start = 0; start < source.size; start += CHUNK_SIZE) {
     const end = Math.min(start + CHUNK_SIZE, source.size)
-    result = await withRetry(() => {
-      const form = baseForm()
+    result = await withRetry(async () => {
+      const form = await baseForm()
       form.append('file', source.slice(start, end), source.name)
       return send(form, { 'X-Unique-Upload-Id': uploadId, 'Content-Range': `bytes ${start}-${end - 1}/${source.size}` })
     })

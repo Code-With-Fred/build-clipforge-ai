@@ -20,13 +20,12 @@ Environment variables:
 | --- | --- |
 | `DATABASE_URL` | Postgres connection string |
 | `CLOUDINARY_CLOUD_NAME` | Your cloud name |
-| `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | Used to sign render jobs (server only) |
-| `CLOUDINARY_UPLOAD_PRESET` | An **unsigned** upload preset for browser uploads |
+| `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | Sign browser uploads and render jobs (secret stays server-side) |
 | `CLOUDINARY_URL` | Optional: `cloudinary://key:secret@cloud` instead of the three variables above |
 | `AI_GATEWAY_API_KEY` | Vercel AI Gateway (automatic on Vercel through OIDC) |
 | `CLIPFORGE_AI_MODEL` | Optional model override (default `anthropic/claude-sonnet-4.6`) |
 
-Cloudinary preset: Settings → Upload → Upload presets → Add → Signing mode **Unsigned**. Leave incoming transformations empty.
+No upload preset is needed: the server signs each browser upload with your API secret.
 
 **Plan limits:** Cloudinary's Free plan has a small maximum video file size, so a full hour of HD video usually won't upload on it. Check "Max video file size" in your Cloudinary plan. If the upload is rejected, the app shows Cloudinary's exact error message.
 
