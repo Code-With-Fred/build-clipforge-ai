@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Captions, Check, Copy, Download, FileText, Loader2, ShieldCheck, Upload, WandSparkles } from 'lucide-react'
+import { Captions, Check, Copy, Download, FileText, Loader2, ShieldAlert, ShieldCheck, ShieldQuestion, Upload, WandSparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { formatTimestamp, type CropMode } from '@/lib/shorts'
 import { extractAudio, parseSizeLimit, rememberedSizeLimit, rememberSizeLimit, splitVideo } from '@/lib/split-video'
@@ -20,9 +20,22 @@ type ClipView = {
   description?: string
   hashtags?: string
   captions?: string
+  youtubeCheck?: 'pending' | 'passed' | 'claimed'
 }
 
-type ProjectView = { id: string; name: string; status: string; duration: number }
+type RightsSource = '' | 'own' | 'permission' | 'unsure'
+
+/** Badge for how the right to clip this video was established. */
+function RightsBadge({ source, proof }: { source?: string | null; proof?: string | null }) {
+  if (source === 'own') return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-400/15 px-2 py-0.5 text-[11px] text-emerald-200"><ShieldCheck className="size-3.5" />Your own video</span>
+  if (source === 'permission') {
+    const isLink = Boolean(proof && /^https?:\/\//i.test(proof))
+    return <span className="inline-flex items-center gap-1 rounded-full bg-sky-400/15 px-2 py-0.5 text-[11px] text-sky-200"><ShieldCheck className="size-3.5" />Permission / campaign{proof && <> · {isLink ? <a href={proof} target="_blank" rel="noreferrer" className="underline">proof</a> : proof}</>}</span>
+  }
+  return <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-[#c7c8d0]"><ShieldQuestion className="size-3.5" />Rights not recorded</span>
+}
+
+type ProjectView = { id: string; name: string; status: string; duration: number; rightsSource?: string | null; rightsProof?: string | null }
 
 type Stage = 'idle' | 'splitting' | 'uploading' | 'audio' | 'planning' | 'rendering' | 'done' | 'failed'
 
@@ -137,7 +150,9 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
   const [captionsOn, setCaptionsOn] = useState(true)
   const [hookOn, setHookOn] = useState(true)
   const [sourceCredit, setSourceCredit] = useState('')
-  const [rightsConfirmed, setRightsConfirmed] = useState(false)
+  const [rightsSource, setRightsSource] = useState<RightsSource>('')
+  const [rightsProof, setRightsProof] = useState('')
+  const rightsReady = rightsSource === 'own' || (rightsSource === 'permission' && rightsProof.trim().length > 0)
   const [stage, setStage] = useState<Stage>(initialProjectId ? 'rendering' : 'idle')
   const [uploadProgress, setUploadProgress] = useState(0)
   const [error, setError] = useState('')
@@ -281,7 +296,8 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
           captions: captionsOn,
           hook: hookOn,
           sourceCredit: sourceCredit.trim() || undefined,
-          rightsConfirmed,
+          rightsSource,
+          rightsProof: rightsProof.trim() || undefined,
         }),
       })
       const body = await readJson(response)
@@ -319,6 +335,16 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
     setTimeout(() => setCopied(''), 1500)
   }
   const youtubeDescription = (item: ClipView) => [item.description, item.hashtags].filter(Boolean).join('\n\n')
+  const setYoutubeCheck = async (item: ClipView, youtubeCheck: NonNullable<ClipView['youtubeCheck']>) => {
+    setClips((current) => current.map((entry) => (entry.id === item.id ? { ...entry, youtubeCheck } : entry)))
+    const response = await fetch(`/api/shorts/${projectId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clipId: item.id, youtubeCheck }),
+    }).catch(() => null)
+    if (!response?.ok) setError('Could not save the copyright check. Try again.')
+  }
+
   const downloadSrt = (item: ClipView) => {
     if (!item.captions) return
     const href = URL.createObjectURL(new Blob([item.captions], { type: 'application/x-subrip' }))
@@ -386,10 +412,31 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
           <label className="text-xs text-[#a8aab4] sm:col-span-2">Source credit (added to every description)
             <input value={sourceCredit} disabled={busy} onChange={(event) => setSourceCredit(event.target.value)} placeholder="e.g. From the full episode on @MyPodcast — youtube.com/watch?v=…" className={inputClass} />
           </label>
-          <label className="flex items-start gap-2 text-sm text-[#c7c8d0] sm:col-span-2"><input type="checkbox" className="mt-1" checked={rightsConfirmed} disabled={busy} onChange={(event) => setRightsConfirmed(event.target.checked)} /> <span><ShieldCheck className="mr-1 inline size-4 text-emerald-300" />I own this video or have the creator&apos;s permission to clip and post it. <span className="text-xs text-[#777a86]">(Clips of content you don&apos;t have rights to get Content ID claims and copyright strikes.)</span></span></label>
         </div>
 
-        <Button onClick={start} disabled={busy || !rightsConfirmed || (!file && !remoteUrl.trim())} className="h-11 gap-2 rounded-xl bg-violet-500 px-5 hover:bg-violet-400">
+        <fieldset className="rounded-2xl border border-white/[0.08] bg-[#111216] p-4">
+          <legend className="px-1 text-xs font-medium text-[#c7c8d0]"><ShieldCheck className="mr-1 inline size-3.5 text-emerald-300" />Copyright: where do your rights to clip this video come from?</legend>
+          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+            {([
+              ['own', 'My own video', 'I made it or own it.', 'border-emerald-300/40 bg-emerald-400/[0.08]'],
+              ['permission', 'Permission / clipping campaign', 'Vyro, Whop Content Rewards, or the creator said yes.', 'border-sky-300/40 bg-sky-400/[0.08]'],
+              ['unsure', 'Not sure', 'Someone else’s video, no permission.', 'border-red-300/40 bg-red-400/[0.08]'],
+            ] as const).map(([value, label, hint, active]) => (
+              <label key={value} className={`cursor-pointer rounded-xl border p-3 text-sm transition-colors ${rightsSource === value ? active : 'border-white/[0.08] hover:bg-white/[0.03]'}`}>
+                <input type="radio" name="rights" className="sr-only" checked={rightsSource === value} disabled={busy} onChange={() => setRightsSource(value)} />
+                <span className="font-medium text-white">{label}</span>
+                <span className="mt-1 block text-xs text-[#858894]">{hint}</span>
+              </label>
+            ))}
+          </div>
+          {rightsSource === 'permission' && <label className="mt-3 block text-xs text-[#a8aab4]">Campaign or permission link (required)
+            <input value={rightsProof} disabled={busy} onChange={(event) => setRightsProof(event.target.value)} placeholder="e.g. https://vyro.com/campaign/… or https://whop.com/…" className={inputClass} />
+          </label>}
+          {rightsSource === 'unsure' && <p className="mt-3 flex gap-2 rounded-xl bg-red-400/10 p-3 text-xs text-red-200"><ShieldAlert className="size-4 shrink-0" />Clips of videos you don&apos;t have rights to get Content ID claims and copyright strikes (3 strikes deletes a channel), and music or effects don&apos;t prevent that. Join the creator&apos;s official clipping campaign (e.g. on Vyro or Whop), then choose &ldquo;Permission / clipping campaign&rdquo;.</p>}
+          <p className="mt-3 text-xs text-[#777a86]">ClipForge can&apos;t see YouTube&apos;s Content ID database. After you upload, each short gets a checkbox for YouTube&apos;s own copyright check.</p>
+        </fieldset>
+
+        <Button onClick={start} disabled={busy || !rightsReady || (!file && !remoteUrl.trim())} className="h-11 gap-2 rounded-xl bg-violet-500 px-5 hover:bg-violet-400">
           {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <WandSparkles data-icon="inline-start" />}
           {stage === 'splitting' ? `Splitting large video ${Math.round(uploadProgress * 100)}%` : stage === 'uploading' ? `Uploading${partLabel ? ` ${partLabel}` : ''} ${Math.round(uploadProgress * 100)}%` : stage === 'audio' ? `Preparing captions ${Math.round(uploadProgress * 100)}%` : stage === 'planning' ? 'Transcribing and picking the best moments…' : `Create ${count} shorts`}
         </Button>
@@ -400,10 +447,15 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
       {projectId && <section className="mt-8">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-[#111216] p-4">
           <div>
-            <p className="text-sm font-medium">{projectView?.name || 'Loading project…'}</p>
+            <p className="flex flex-wrap items-center gap-2 text-sm font-medium">{projectView?.name || 'Loading project…'}{projectView && <RightsBadge source={projectView.rightsSource} proof={projectView.rightsProof} />}</p>
             <p className="mt-1 text-xs text-[#858894]">
               {stage === 'done' ? `All ${clips.length} shorts are ready.` : stage === 'failed' ? `${readyCount}/${clips.length} shorts ready.` : `Rendering on Cloudinary: ${readyCount}/${clips.length || '…'} ready. Long videos can take several minutes, and you can close this tab and come back from the dashboard.`}
             </p>
+            {readyCount > 0 && <p className="mt-1 text-xs text-[#858894]">
+              YouTube copyright check: <span className="text-emerald-300">{clips.filter((entry) => entry.youtubeCheck === 'passed').length} passed</span>
+              {clips.some((entry) => entry.youtubeCheck === 'claimed') && <> · <span className="text-amber-200">{clips.filter((entry) => entry.youtubeCheck === 'claimed').length} claimed</span></>}
+              {' '}· {clips.filter((entry) => entry.status === 'ready' && (!entry.youtubeCheck || entry.youtubeCheck === 'pending')).length} not checked yet
+            </p>}
           </div>
           <div className="flex gap-2">
             {readyCount > 0 && <Button onClick={downloadAll} disabled={downloadingAll} className="gap-2 rounded-xl bg-white text-black hover:bg-white/90">{downloadingAll ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}Download {readyCount === clips.length ? 'all' : `${readyCount} ready`}</Button>}
@@ -428,6 +480,18 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
                 : item.reason && <p className="mt-1 text-xs text-[#858894]">{item.reason}</p>}
               {item.hashtags && <p className="mt-1 text-xs text-sky-300">{item.hashtags}</p>}
               {item.detail && <p className="mt-1 text-xs text-amber-200">{item.detail}</p>}
+              {item.status === 'ready' && <div className="mt-3 rounded-lg border border-white/[0.08] p-2 text-xs">
+                <p className="text-[#a8aab4]">
+                  {item.youtubeCheck === 'passed' ? <span className="text-emerald-300">✅ YouTube check: no issues found. Safe to publish.</span>
+                    : item.youtubeCheck === 'claimed' ? <span className="text-amber-200">⚠️ YouTube found a copyright claim. Don&apos;t publish; delete the draft.</span>
+                    : <>YouTube copyright check: upload as <b>Private</b> in YouTube Studio and wait for the &ldquo;Checks&rdquo; step.</>}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <button type="button" onClick={() => setYoutubeCheck(item, 'passed')} className={`rounded-md px-2 py-1 ${item.youtubeCheck === 'passed' ? 'bg-emerald-400/20 text-emerald-200' : 'bg-white/[0.05] text-[#c7c8d0] hover:bg-white/[0.1]'}`}>No issues found</button>
+                  <button type="button" onClick={() => setYoutubeCheck(item, 'claimed')} className={`rounded-md px-2 py-1 ${item.youtubeCheck === 'claimed' ? 'bg-amber-400/20 text-amber-200' : 'bg-white/[0.05] text-[#c7c8d0] hover:bg-white/[0.1]'}`}>Got a claim</button>
+                  {item.youtubeCheck && item.youtubeCheck !== 'pending' && <button type="button" onClick={() => setYoutubeCheck(item, 'pending')} className="rounded-md px-2 py-1 text-[#858894] hover:text-white">Reset</button>}
+                </div>
+              </div>}
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button size="sm" disabled={item.status !== 'ready'} onClick={() => downloadClip(item, projectView?.name || 'short')} className="gap-1.5 rounded-lg bg-violet-500 hover:bg-violet-400"><Download data-icon="inline-start" />MP4</Button>
                 <Button size="sm" variant="outline" onClick={() => copyText(`${item.id}:title`, item.title)} className="gap-1.5 rounded-lg border-white/[0.1] bg-transparent">{copied === `${item.id}:title` ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}Title</Button>

@@ -1,5 +1,6 @@
 import { and, asc, eq } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { checkClipReady, clipUrl, finishingTransformation, getCloudinaryConfig, queueClipRenders, saveRenderedClip, uploadCaptions } from '@/lib/cloudinary'
 import { db } from '@/lib/db'
 import { ensureClipTable } from '@/lib/db/ensure'
@@ -89,7 +90,24 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
   }
 
   return NextResponse.json({
-    project: { id: owned.id, name: owned.name, status: owned.status, duration: owned.duration, createdAt: owned.createdAt },
+    project: { id: owned.id, name: owned.name, status: owned.status, duration: owned.duration, createdAt: owned.createdAt, rightsSource: owned.rightsSource, rightsProof: owned.rightsProof },
     clips: clips.map(({ userId: _userId, transformation: _transformation, renderUrl: _renderUrl, finishing: _finishing, ...rest }) => rest),
   })
+}
+
+const checkSchema = z.object({ clipId: z.string().min(1), youtubeCheck: z.enum(['pending', 'passed', 'claimed']) })
+
+/** Record the result of YouTube Studio's copyright check for one short. */
+export async function PATCH(request: Request, { params }: { params: Promise<{ projectId: string }> }) {
+  const { projectId } = await params
+  const parsed = checkSchema.safeParse(await request.json().catch(() => null))
+  if (!parsed.success) return NextResponse.json({ error: 'Invalid copyright check update.' }, { status: 400 })
+
+  await ensureClipTable()
+  const [updated] = await db.update(clip)
+    .set({ youtubeCheck: parsed.data.youtubeCheck, updatedAt: new Date() })
+    .where(and(eq(clip.id, parsed.data.clipId), eq(clip.projectId, projectId), eq(clip.userId, OWNER_ID)))
+    .returning({ id: clip.id, youtubeCheck: clip.youtubeCheck })
+  if (!updated) return NextResponse.json({ error: 'Short not found.' }, { status: 404 })
+  return NextResponse.json(updated)
 }
