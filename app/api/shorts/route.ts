@@ -3,11 +3,11 @@ import { eq } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { planShorts } from '@/lib/ai-planner'
-import { getSession } from '@/lib/auth'
 import { clipTransformation, clipUrl, getCloudinaryConfig, getVideoResource, MISSING_CONFIG_MESSAGE, queueClipRenders } from '@/lib/cloudinary'
 import { db } from '@/lib/db'
 import { ensureClipTable } from '@/lib/db/ensure'
 import { clip, project, upload } from '@/lib/db/schema'
+import { OWNER_ID } from '@/lib/owner'
 import { feasibleCount, parseTranscript, SHORTS_LIMITS } from '@/lib/shorts'
 
 export const runtime = 'nodejs'
@@ -26,9 +26,6 @@ const requestSchema = z.object({
 })
 
 export async function POST(request: Request) {
-  const session = await getSession()
-  if (!session?.user) return NextResponse.json({ error: 'Sign in to create shorts.' }, { status: 401 })
-
   const config = getCloudinaryConfig()
   if (!config) return NextResponse.json({ error: MISSING_CONFIG_MESSAGE }, { status: 503 })
 
@@ -68,7 +65,7 @@ export async function POST(request: Request) {
     return {
       id: randomUUID(),
       projectId,
-      userId: session.user.id,
+      userId: OWNER_ID,
       position: index + 1,
       start: planned.start,
       duration: planned.duration,
@@ -84,7 +81,7 @@ export async function POST(request: Request) {
 
   await db.insert(project).values({
     id: projectId,
-    userId: session.user.id,
+    userId: OWNER_ID,
     name: input.name,
     status: 'processing',
     duration: Math.round(videoDuration),
@@ -92,7 +89,7 @@ export async function POST(request: Request) {
   })
   await db.insert(upload).values({
     id: randomUUID(),
-    userId: session.user.id,
+    userId: OWNER_ID,
     projectId,
     pathname: input.publicId,
     filename: input.sourceLabel || input.name,

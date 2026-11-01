@@ -1,26 +1,22 @@
 import { randomUUID } from 'node:crypto'
 import { desc, eq } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
-import { getSession } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { project } from '@/lib/db/schema'
+import { OWNER_ID } from '@/lib/owner'
 
 export async function GET() {
-  const session = await getSession()
-  if (!session?.user) return NextResponse.json({ projects: [] })
 
   const projects = await db
     .select()
     .from(project)
-    .where(eq(project.userId, session.user.id))
+    .where(eq(project.userId, OWNER_ID))
     .orderBy(desc(project.updatedAt))
 
   return NextResponse.json({ projects })
 }
 
 export async function POST(request: Request) {
-  const session = await getSession()
-  if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await request.json().catch(() => null)
   const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 120) : ''
@@ -28,7 +24,7 @@ export async function POST(request: Request) {
 
   const record = {
     id: randomUUID(),
-    userId: session.user.id,
+    userId: OWNER_ID,
     name,
     status: 'draft',
     duration: 0,
