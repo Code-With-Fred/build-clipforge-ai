@@ -23,6 +23,8 @@ Environment variables:
 | `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | Sign browser uploads and render jobs (secret stays server-side) |
 | `CLOUDINARY_URL` | Optional: `cloudinary://key:secret@cloud` instead of the three variables above |
 | `AI_GATEWAY_API_KEY` | Vercel AI Gateway (automatic on Vercel through OIDC) |
+| `GROQ_API_KEY` | Recommended, **free**: automatic transcription (Whisper large-v3-turbo; free tier ≈ 8 h of audio/day, no card) for captions, hooks, AI-picked moments and descriptions. Get one at console.groq.com |
+| `OPENAI_API_KEY` | Paid alternative to Groq for transcription (~$0.36 per hour of video) |
 | `CLIPFORGE_AI_MODEL` | Optional model override (default `anthropic/claude-sonnet-4.6`) |
 
 No upload preset is needed: the server signs each browser upload with your API secret.
@@ -38,7 +40,24 @@ pnpm dev
 
 Open the app and click **New project**. There is no login: this is a single-user personal tool, so keep the URL private (anyone with it can use your Cloudinary credits).
 
+## What each short gets
+
+- 1080×1920 vertical MP4 (H.264/AAC), cut from the strongest moments
+- Burned-in word-by-word captions (lower third, above the Shorts buttons)
+- A hook line on screen for the first 3 seconds
+- Its own title, description and hashtags, plus your source credit, with copy buttons
+- A downloadable `.srt` captions file
+
+Rendering pipeline per short: cut on the long video (eager) → saved as its own asset →
+captions + hook burned on (eager) → ready. If captioning fails, the plain short is delivered.
+
+Only clip videos you own or have permission to use: clips of other people's content get
+Content ID claims and copyright strikes no matter how they are edited.
+
 ## Getting a transcript
+
+Automatic when `GROQ_API_KEY` (free) or `OPENAI_API_KEY` is set. Otherwise paste one:
+
 
 - YouTube Studio → Subtitles → your video → ⋮ → Download `.srt`
 - Or, on a YouTube watch page, open "Show transcript", select everything and paste it.

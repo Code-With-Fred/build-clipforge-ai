@@ -3,15 +3,18 @@ import { eq } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { planShorts } from '@/lib/ai-planner'
+import { buildClipCues, fallbackHook, toSrt, type TimedWord } from '@/lib/captions'
 import { clipTransformation, clipUrl, getCloudinaryConfig, getVideoResource, MISSING_CONFIG_MESSAGE, queueClipRenders } from '@/lib/cloudinary'
 import { db } from '@/lib/db'
 import { ensureClipTable } from '@/lib/db/ensure'
 import { clip, project, upload } from '@/lib/db/schema'
 import { OWNER_ID } from '@/lib/owner'
-import { feasibleCount, parseTranscript, partIndexFor, SHORTS_LIMITS, type SourcePart } from '@/lib/shorts'
+import { feasibleCount, parseTranscript, partIndexFor, SHORTS_LIMITS, type SourcePart, type TranscriptSegment } from '@/lib/shorts'
+import { transcribeAudioUrl, transcriptionAvailable } from '@/lib/transcribe'
 
 export const runtime = 'nodejs'
-export const maxDuration = 120
+// Transcribing an hour of audio can take a minute or two.
+export const maxDuration = 300
 
 // `duration` is what Cloudinary returned for the upload; used when the Admin API omits it.
 const sourceSchema = z.object({ publicId: z.string().min(1).max(500), bytes: z.number().int().nonnegative().optional(), duration: z.number().positive().optional() })
@@ -29,6 +32,12 @@ const requestSchema = z.object({
   crop: z.enum(['center', 'smart', 'blur']),
   grayscale: z.boolean(),
   transcript: z.string().max(500_000).optional(),
+  // Audio track extracted in the browser and uploaded to Cloudinary, for auto-transcription.
+  audioPublicId: z.string().min(1).max(500).optional(),
+  captions: z.boolean().default(true),
+  hook: z.boolean().default(true),
+  sourceCredit: z.string().trim().max(300).optional(),
+  rightsConfirmed: z.literal(true, { message: 'Confirm that you own this video or have permission to clip it.' }),
 })
 
 export async function POST(request: Request) {
@@ -63,14 +72,36 @@ export async function POST(request: Request) {
 
   await ensureClipTable()
 
+  // Transcript: pasted by the user, else transcribed automatically from the audio track.
+  let segments: TranscriptSegment[] = input.transcript ? parseTranscript(input.transcript) : []
+  let words: TimedWord[] = []
+  let transcriptSource: 'pasted' | 'auto' | 'none' = segments.length ? 'pasted' : 'none'
+  let transcriptNote: string | undefined
+  if (!segments.length && input.audioPublicId) {
+    if (!transcriptionAvailable()) {
+      transcriptNote = 'Add a free GROQ_API_KEY (console.groq.com) in Vercel to get automatic captions, hooks and AI-picked moments.'
+    } else {
+      try {
+        const audioUrl = `https://res.cloudinary.com/${config.cloudName}/video/upload/${input.audioPublicId.split('/').map(encodeURIComponent).join('/')}.mp3`
+        const transcript = await transcribeAudioUrl(audioUrl)
+        segments = transcript.segments
+        words = transcript.words
+        if (segments.length) transcriptSource = 'auto'
+      } catch (error) {
+        transcriptNote = `Automatic transcription failed, so there are no captions: ${error instanceof Error ? error.message : 'unknown error'}`
+      }
+    }
+  }
+
   const plan = await planShorts({
     videoDuration,
     count: input.count,
     clipDuration: input.clipDuration,
-    segments: input.transcript ? parseTranscript(input.transcript) : [],
+    segments,
     videoName: input.name,
     parts,
   })
+  const credit = input.sourceCredit ? `Credit: ${input.sourceCredit}` : ''
 
   const projectId = randomUUID()
   const now = new Date()
@@ -80,6 +111,10 @@ export async function POST(request: Request) {
     const publicId = sources[partIndex].publicId
     const localStart = Math.max(0, planned.start - parts[partIndex].offset)
     const transformation = clipTransformation({ start: localStart, duration: planned.duration, crop: input.crop, grayscale: input.grayscale })
+    const cues = buildClipCues({ words, segments }, planned.start, planned.duration)
+    const captions = input.captions && cues.length ? toSrt(cues) : ''
+    const hook = input.hook ? (planned.hook || fallbackHook(cues)) : ''
+    const renderUrl = clipUrl(config.cloudName, publicId, transformation)
     return {
       publicId,
       id: randomUUID(),
@@ -91,8 +126,15 @@ export async function POST(request: Request) {
       title: planned.title,
       reason: planned.reason,
       transformation,
-      url: clipUrl(config.cloudName, publicId, transformation),
+      url: renderUrl,
+      renderUrl,
       status: 'processing',
+      hook,
+      captions,
+      description: [planned.description || '', credit].filter(Boolean).join('\n\n'),
+      hashtags: planned.hashtags || '#Shorts',
+      // 'pending' = burn captions/hook after the base render; 'none' = deliver as rendered.
+      finishing: captions || hook ? 'pending' : 'none',
       createdAt: now,
       updatedAt: now,
     }
@@ -127,5 +169,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: `Cloudinary refused the render job: ${error instanceof Error ? error.message : 'unknown error'}`, projectId }, { status: 502 })
   }
 
-  return NextResponse.json({ projectId, mode: plan.mode, note: plan.note, videoDuration, parts: sources.length }, { status: 201 })
+  return NextResponse.json({ projectId, mode: plan.mode, note: [transcriptNote, plan.note].filter(Boolean).join(' '), transcript: transcriptSource, videoDuration, parts: sources.length }, { status: 201 })
 }

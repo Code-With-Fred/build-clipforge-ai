@@ -80,6 +80,14 @@ export const clip = pgTable('clip', {
   transformation: text('transformation').notNull(),
   url: text('url').notNull(),
   status: text('status').notNull().default('processing'),
+  // YouTube-ready extras (added by ensureClipTable for existing databases).
+  renderUrl: text('renderUrl'),
+  hook: text('hook').notNull().default(''),
+  description: text('description').notNull().default(''),
+  hashtags: text('hashtags').notNull().default(''),
+  captions: text('captions').notNull().default(''),
+  finishing: text('finishing').notNull().default(''),
+  detail: text('detail').notNull().default(''),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
   updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 })

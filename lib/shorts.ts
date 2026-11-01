@@ -7,6 +7,10 @@ export type ClipPlan = {
   duration: number
   title: string
   reason: string
+  /** On-screen text for the first seconds; YouTube description; space-separated #tags. */
+  hook?: string
+  description?: string
+  hashtags?: string
 }
 
 export type TranscriptSegment = { start: number; text: string }
@@ -84,7 +88,7 @@ export function fitToParts(start: number, clipDuration: number, parts: SourcePar
  * always gets `count` clips when they fit.
  */
 export function finalizePlan(
-  picks: Array<{ start: number; title?: string; reason?: string }>,
+  picks: Array<{ start: number; title?: string; reason?: string; hook?: string; description?: string; hashtags?: string }>,
   videoDuration: number,
   count: number,
   clipDuration: number,
@@ -111,6 +115,9 @@ export function finalizePlan(
       duration: clipDuration,
       title: (pick.title?.trim() || `Clip at ${formatTimestamp(pick.start)}`).slice(0, 100),
       reason: (pick.reason?.trim() || '').slice(0, 300),
+      hook: pick.hook?.trim().slice(0, 90),
+      description: pick.description?.trim().slice(0, 900),
+      hashtags: pick.hashtags?.trim().slice(0, 200),
     })
   }
 
