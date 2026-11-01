@@ -67,3 +67,19 @@ export const upload = pgTable('upload', {
   size: integer('size').notNull(),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
 })
+
+export const clip = pgTable('clip', {
+  id: text('id').primaryKey(),
+  projectId: text('projectId').notNull(),
+  userId: text('userId').notNull(),
+  position: integer('position').notNull(),
+  start: integer('start').notNull(),
+  duration: integer('duration').notNull(),
+  title: text('title').notNull(),
+  reason: text('reason').notNull().default(''),
+  transformation: text('transformation').notNull(),
+  url: text('url').notNull(),
+  status: text('status').notNull().default('processing'),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+})
