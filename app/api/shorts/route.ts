@@ -13,7 +13,8 @@ import { feasibleCount, parseTranscript, partIndexFor, SHORTS_LIMITS, type Sourc
 export const runtime = 'nodejs'
 export const maxDuration = 120
 
-const sourceSchema = z.object({ publicId: z.string().min(1).max(500), bytes: z.number().int().nonnegative().optional() })
+// `duration` is what Cloudinary returned for the upload; used when the Admin API omits it.
+const sourceSchema = z.object({ publicId: z.string().min(1).max(500), bytes: z.number().int().nonnegative().optional(), duration: z.number().positive().optional() })
 
 const requestSchema = z.object({
   // A long video may arrive as several consecutive parts (split in the browser to fit
@@ -43,7 +44,7 @@ export async function POST(request: Request) {
   // Trust Cloudinary, not the browser, for each part's real duration.
   let durations: number[]
   try {
-    durations = await Promise.all(sources.map(async (source) => Number((await getVideoResource(config, source.publicId)).duration)))
+    durations = await Promise.all(sources.map(async (source) => (await getVideoResource(config, source.publicId)).duration ?? Number(source.duration)))
   } catch (error) {
     return NextResponse.json({ error: `Could not read the uploaded video from Cloudinary: ${error instanceof Error ? error.message : 'unknown error'}` }, { status: 502 })
   }
@@ -57,7 +58,7 @@ export async function POST(request: Request) {
   }
   const videoDuration = parts[parts.length - 1].offset + parts[parts.length - 1].duration
   if (feasibleCount(videoDuration, input.clipDuration, input.count) < 1) {
-    return NextResponse.json({ error: `The video is shorter than one ${input.clipDuration}-second clip.` }, { status: 400 })
+    return NextResponse.json({ error: `This video is ${Math.round(videoDuration)} seconds long, shorter than one ${input.clipDuration}-second short. Pick a shorter "Length of each short" or use a longer video.` }, { status: 400 })
   }
 
   await ensureClipTable()
