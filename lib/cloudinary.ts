@@ -5,7 +5,6 @@ type CloudinaryConfig = {
   cloudName: string
   apiKey: string
   apiSecret: string
-  uploadPreset?: string
 }
 
 /** Reads CLOUDINARY_URL (cloudinary://key:secret@cloud) or the individual variables. */
@@ -24,11 +23,11 @@ export function getCloudinaryConfig(): CloudinaryConfig | null {
     }
   }
   if (!cloudName || !apiKey || !apiSecret) return null
-  return { cloudName, apiKey, apiSecret, uploadPreset: process.env.CLOUDINARY_UPLOAD_PRESET }
+  return { cloudName, apiKey, apiSecret }
 }
 
 export const MISSING_CONFIG_MESSAGE =
-  'Cloudinary is not fully configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET and CLOUDINARY_UPLOAD_PRESET (or CLOUDINARY_URL).'
+  'Cloudinary is not fully configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET (or CLOUDINARY_URL).'
 
 /**
  * One canonical transformation per clip. The eager job and the delivery URL MUST use
@@ -58,6 +57,16 @@ function sign(params: Record<string, string>, apiSecret: string) {
     .map((key) => `${key}=${params[key]}`)
     .join('&')
   return createHash('sha1').update(payload + apiSecret).digest('hex')
+}
+
+/**
+ * Signed parameters for a direct browser → Cloudinary upload. The secret never leaves
+ * the server; the same signature is valid for every chunk of a chunked upload.
+ * Signing replaces the need for an unsigned upload preset.
+ */
+export function signedUploadParams(config: CloudinaryConfig, folder = 'clipforge/source') {
+  const params = { folder, timestamp: String(Math.floor(Date.now() / 1000)) }
+  return { ...params, api_key: config.apiKey, signature: sign(params, config.apiSecret) }
 }
 
 async function cloudinaryError(response: Response) {
