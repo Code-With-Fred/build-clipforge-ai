@@ -8,13 +8,18 @@ import { db } from '@/lib/db'
 import { ensureClipTable } from '@/lib/db/ensure'
 import { clip, project, upload } from '@/lib/db/schema'
 import { OWNER_ID } from '@/lib/owner'
-import { feasibleCount, parseTranscript, SHORTS_LIMITS } from '@/lib/shorts'
+import { feasibleCount, parseTranscript, partIndexFor, SHORTS_LIMITS, type SourcePart } from '@/lib/shorts'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
 
+const sourceSchema = z.object({ publicId: z.string().min(1).max(500), bytes: z.number().int().nonnegative().optional() })
+
 const requestSchema = z.object({
-  publicId: z.string().min(1).max(500),
+  // A long video may arrive as several consecutive parts (split in the browser to fit
+  // the Cloudinary plan's per-file size limit). `publicId` is kept for single uploads.
+  sources: z.array(sourceSchema).min(1).max(50).optional(),
+  publicId: z.string().min(1).max(500).optional(),
   name: z.string().trim().min(1).max(200),
   sourceLabel: z.string().max(2000).optional(),
   bytes: z.number().int().nonnegative().optional(),
@@ -32,18 +37,25 @@ export async function POST(request: Request) {
   const parsed = requestSchema.safeParse(await request.json().catch(() => null))
   if (!parsed.success) return NextResponse.json({ error: 'Invalid shorts request.', issues: parsed.error.issues }, { status: 400 })
   const input = parsed.data
+  const sources = input.sources ?? (input.publicId ? [{ publicId: input.publicId, bytes: input.bytes }] : [])
+  if (!sources.length) return NextResponse.json({ error: 'No uploaded video was provided.' }, { status: 400 })
 
-  // Trust Cloudinary, not the browser, for the real duration.
-  let videoDuration: number
+  // Trust Cloudinary, not the browser, for each part's real duration.
+  let durations: number[]
   try {
-    const resource = await getVideoResource(config, input.publicId)
-    videoDuration = Number(resource.duration)
+    durations = await Promise.all(sources.map(async (source) => Number((await getVideoResource(config, source.publicId)).duration)))
   } catch (error) {
     return NextResponse.json({ error: `Could not read the uploaded video from Cloudinary: ${error instanceof Error ? error.message : 'unknown error'}` }, { status: 502 })
   }
-  if (!Number.isFinite(videoDuration) || videoDuration <= 0) {
+  if (durations.some((value) => !Number.isFinite(value) || value <= 0)) {
     return NextResponse.json({ error: 'Cloudinary has not reported a duration for this video yet. Wait a moment and try again.' }, { status: 409 })
   }
+  const parts: SourcePart[] = []
+  for (const duration of durations) {
+    const previous = parts[parts.length - 1]
+    parts.push({ offset: previous ? previous.offset + previous.duration : 0, duration })
+  }
+  const videoDuration = parts[parts.length - 1].offset + parts[parts.length - 1].duration
   if (feasibleCount(videoDuration, input.clipDuration, input.count) < 1) {
     return NextResponse.json({ error: `The video is shorter than one ${input.clipDuration}-second clip.` }, { status: 400 })
   }
@@ -56,13 +68,19 @@ export async function POST(request: Request) {
     clipDuration: input.clipDuration,
     segments: input.transcript ? parseTranscript(input.transcript) : [],
     videoName: input.name,
+    parts,
   })
 
   const projectId = randomUUID()
   const now = new Date()
   const clips = plan.clips.map((planned, index) => {
-    const transformation = clipTransformation({ start: planned.start, duration: planned.duration, crop: input.crop, grayscale: input.grayscale })
+    // Clips never straddle a part boundary (finalizePlan guarantees it); cut from the owning part.
+    const partIndex = Math.max(0, partIndexFor(planned.start, planned.duration, parts))
+    const publicId = sources[partIndex].publicId
+    const localStart = Math.max(0, planned.start - parts[partIndex].offset)
+    const transformation = clipTransformation({ start: localStart, duration: planned.duration, crop: input.crop, grayscale: input.grayscale })
     return {
+      publicId,
       id: randomUUID(),
       projectId,
       userId: OWNER_ID,
@@ -72,7 +90,7 @@ export async function POST(request: Request) {
       title: planned.title,
       reason: planned.reason,
       transformation,
-      url: clipUrl(config.cloudName, input.publicId, transformation),
+      url: clipUrl(config.cloudName, publicId, transformation),
       status: 'processing',
       createdAt: now,
       updatedAt: now,
@@ -85,25 +103,28 @@ export async function POST(request: Request) {
     name: input.name,
     status: 'processing',
     duration: Math.round(videoDuration),
-    sourcePathname: input.publicId,
+    sourcePathname: sources.map((source) => source.publicId).join(','),
   })
-  await db.insert(upload).values({
+  await db.insert(upload).values(sources.map((source, index) => ({
     id: randomUUID(),
     userId: OWNER_ID,
     projectId,
-    pathname: input.publicId,
-    filename: input.sourceLabel || input.name,
+    pathname: source.publicId,
+    filename: sources.length > 1 ? `${input.sourceLabel || input.name} (part ${index + 1}/${sources.length})` : input.sourceLabel || input.name,
     contentType: 'video/mp4',
-    size: Math.min(input.bytes ?? 0, 2_147_483_647),
-  })
-  await db.insert(clip).values(clips)
+    size: Math.min(source.bytes ?? 0, 2_147_483_647),
+  })))
+  await db.insert(clip).values(clips.map(({ publicId: _publicId, ...row }) => row))
 
   try {
-    await queueClipRenders(config, input.publicId, clips.map((item) => item.transformation))
+    for (const source of sources) {
+      const transformations = clips.filter((item) => item.publicId === source.publicId).map((item) => item.transformation)
+      if (transformations.length) await queueClipRenders(config, source.publicId, transformations)
+    }
   } catch (error) {
     await db.update(project).set({ status: 'failed', updatedAt: new Date() }).where(eq(project.id, projectId))
     return NextResponse.json({ error: `Cloudinary refused the render job: ${error instanceof Error ? error.message : 'unknown error'}`, projectId }, { status: 502 })
   }
 
-  return NextResponse.json({ projectId, mode: plan.mode, note: plan.note, videoDuration }, { status: 201 })
+  return NextResponse.json({ projectId, mode: plan.mode, note: plan.note, videoDuration, parts: sources.length }, { status: 201 })
 }

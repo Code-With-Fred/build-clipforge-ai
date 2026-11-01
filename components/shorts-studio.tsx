@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, Copy, Download, FileText, Loader2, Upload, WandSparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { formatTimestamp, type CropMode } from '@/lib/shorts'
+import { parseSizeLimit, rememberedSizeLimit, rememberSizeLimit, splitVideo } from '@/lib/split-video'
 
 type ClipView = {
   id: string
@@ -19,7 +20,9 @@ type ClipView = {
 
 type ProjectView = { id: string; name: string; status: string; duration: number }
 
-type Stage = 'idle' | 'uploading' | 'planning' | 'rendering' | 'done' | 'failed'
+type Stage = 'idle' | 'splitting' | 'uploading' | 'planning' | 'rendering' | 'done' | 'failed'
+
+type UploadedSource = { publicId: string; bytes: number }
 
 const CHUNK_SIZE = 20 * 1024 * 1024 // Cloudinary chunked upload: >= 5 MB per chunk except the last.
 const POLL_MS = 8000
@@ -138,7 +141,8 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
   const [downloadingAll, setDownloadingAll] = useState(false)
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const busy = stage === 'uploading' || stage === 'planning'
+  const [partLabel, setPartLabel] = useState('')
+  const busy = stage === 'splitting' || stage === 'uploading' || stage === 'planning'
   const readyCount = clips.filter((item) => item.status === 'ready').length
 
   const poll = useCallback(async (id: string) => {
@@ -181,10 +185,53 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
     }
     setError(''); setNote(''); setClips([]); setProjectView(null); setUploadProgress(0)
     try {
-      setStage('uploading')
-      const uploaded = await uploadToCloudinary(file ?? url, setUploadProgress)
-      const publicId = String(uploaded.public_id || '')
-      if (!publicId) throw new Error('Cloudinary did not return a video ID.')
+      const toSource = (uploaded: Record<string, unknown>, fallbackBytes: number): UploadedSource => {
+        const publicId = String(uploaded.public_id || '')
+        if (!publicId) throw new Error('Cloudinary did not return a video ID.')
+        return { publicId, bytes: Number(uploaded.bytes) || fallbackBytes }
+      }
+
+      // Cloudinary plans cap the size of a single video file (100 MB on Free). Bigger files
+      // are split in the browser into consecutive parts (no re-encoding), uploaded one by one.
+      const uploadInParts = async (source: File, limitBytes: number) => {
+        rememberSizeLimit(limitBytes)
+        const parts: UploadedSource[] = []
+        let doneBytes = 0
+        setStage('splitting'); setUploadProgress(0); setPartLabel('')
+        for await (const part of splitVideo(source, {
+          targetBytes: Math.floor(limitBytes * 0.75),
+          minPartSeconds: Math.max(clipDuration * 3, 300),
+          onProgress: setUploadProgress,
+        })) {
+          if (part.file.size > limitBytes) throw new Error(`Part ${part.index + 1} is still too large for your Cloudinary plan (${Math.round(part.file.size / 1048576)} MB). Export the video at a lower bitrate and try again.`)
+          setStage('uploading')
+          setPartLabel(`part ${part.index + 1} of ${part.total}`)
+          const uploaded = await uploadToCloudinary(part.file, (fraction) => setUploadProgress((doneBytes + fraction * part.file.size) / source.size))
+          doneBytes += part.file.size
+          parts.push(toSource(uploaded, part.file.size))
+        }
+        if (!parts.length) throw new Error('The video splitter produced no parts.')
+        return parts
+      }
+
+      let sources: UploadedSource[]
+      const knownLimit = rememberedSizeLimit()
+      if (file && knownLimit && file.size > knownLimit) {
+        sources = await uploadInParts(file, knownLimit)
+      } else {
+        setStage('uploading'); setPartLabel('')
+        try {
+          sources = [toSource(await uploadToCloudinary(file ?? url, setUploadProgress), file?.size ?? 0)]
+        } catch (uploadError) {
+          const limit = uploadError instanceof Error ? parseSizeLimit(uploadError.message) : null
+          if (!file || !limit) {
+            if (!file && limit) throw new Error(`This video is larger than your Cloudinary plan allows (${Math.round(limit / 1048576)} MB). Download it and upload the file instead: large files are split automatically.`)
+            throw uploadError
+          }
+          sources = await uploadInParts(file, limit)
+        }
+      }
+      setPartLabel('')
 
       setStage('planning')
       const name = file ? file.name.replace(/\.[^.]+$/, '') : decodeURIComponent(new URL(url).pathname.split('/').pop() || 'Remote video').replace(/\.[^.]+$/, '')
@@ -192,10 +239,9 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          publicId,
+          sources,
           name: name.slice(0, 200) || 'Untitled video',
           sourceLabel: file ? file.name : url,
-          bytes: Number(uploaded.bytes) || file?.size || 0,
           count,
           clipDuration,
           crop,
@@ -291,10 +337,10 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
 
         <Button onClick={start} disabled={busy || (!file && !remoteUrl.trim())} className="h-11 gap-2 rounded-xl bg-violet-500 px-5 hover:bg-violet-400">
           {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <WandSparkles data-icon="inline-start" />}
-          {stage === 'uploading' ? `Uploading ${Math.round(uploadProgress * 100)}%` : stage === 'planning' ? (transcript.trim() ? 'AI is picking moments…' : 'Planning clips…') : `Create ${count} shorts`}
+          {stage === 'splitting' ? `Splitting large video ${Math.round(uploadProgress * 100)}%` : stage === 'uploading' ? `Uploading${partLabel ? ` ${partLabel}` : ''} ${Math.round(uploadProgress * 100)}%` : stage === 'planning' ? (transcript.trim() ? 'AI is picking moments…' : 'Planning clips…') : `Create ${count} shorts`}
         </Button>
-        {stage === 'uploading' && <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.08]"><div className="h-full bg-gradient-to-r from-violet-500 to-indigo-400 transition-all" style={{ width: `${Math.round(uploadProgress * 100)}%` }} /></div>}
-        {stage === 'uploading' && <p className="text-xs text-[#777a86]">Keep this tab open until the upload finishes. Rendering happens on Cloudinary afterwards, so you can leave once it starts.</p>}
+        {(stage === 'uploading' || stage === 'splitting') && <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.08]"><div className="h-full bg-gradient-to-r from-violet-500 to-indigo-400 transition-all" style={{ width: `${Math.round(uploadProgress * 100)}%` }} /></div>}
+        {(stage === 'uploading' || stage === 'splitting') && <p className="text-xs text-[#777a86]">{stage === 'splitting' ? 'Your file is bigger than your Cloudinary plan allows, so it is being split into parts in your browser (no quality loss). ' : ''}Keep this tab open until the upload finishes. Rendering happens on Cloudinary afterwards, so you can leave once it starts.</p>}
       </section>}
 
       {projectId && <section className="mt-8">
