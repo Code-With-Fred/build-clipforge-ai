@@ -22,7 +22,7 @@ type ProjectView = { id: string; name: string; status: string; duration: number 
 
 type Stage = 'idle' | 'splitting' | 'uploading' | 'planning' | 'rendering' | 'done' | 'failed'
 
-type UploadedSource = { publicId: string; bytes: number }
+type UploadedSource = { publicId: string; bytes: number; duration?: number }
 
 const CHUNK_SIZE = 20 * 1024 * 1024 // Cloudinary chunked upload: >= 5 MB per chunk except the last.
 const POLL_MS = 8000
@@ -188,7 +188,8 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
       const toSource = (uploaded: Record<string, unknown>, fallbackBytes: number): UploadedSource => {
         const publicId = String(uploaded.public_id || '')
         if (!publicId) throw new Error('Cloudinary did not return a video ID.')
-        return { publicId, bytes: Number(uploaded.bytes) || fallbackBytes }
+        const duration = Number(uploaded.duration)
+        return { publicId, bytes: Number(uploaded.bytes) || fallbackBytes, ...(duration > 0 ? { duration } : {}) }
       }
 
       // Cloudinary plans cap the size of a single video file (100 MB on Free). Bigger files

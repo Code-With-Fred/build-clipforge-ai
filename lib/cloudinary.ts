@@ -77,14 +77,22 @@ async function cloudinaryError(response: Response) {
 /** Admin API lookup; confirms the asset exists and gives the authoritative duration. */
 export async function getVideoResource(config: CloudinaryConfig, publicId: string) {
   const response = await fetch(
-    `https://api.cloudinary.com/v1_1/${config.cloudName}/resources/video/upload/${encodePublicId(publicId)}`,
+    // media_metadata=true is needed for the Admin API to report a video's duration.
+    `https://api.cloudinary.com/v1_1/${config.cloudName}/resources/video/upload/${encodePublicId(publicId)}?media_metadata=true`,
     {
       headers: { Authorization: `Basic ${Buffer.from(`${config.apiKey}:${config.apiSecret}`).toString('base64')}` },
       cache: 'no-store',
     },
   )
   if (!response.ok) throw new Error(await cloudinaryError(response))
-  return await response.json() as { public_id: string; duration?: number; bytes?: number; width?: number; height?: number }
+  const resource = await response.json() as {
+    public_id: string
+    duration?: number
+    bytes?: number
+    video_metadata?: { format?: { duration?: string | number } }
+  }
+  const duration = Number(resource.duration ?? resource.video_metadata?.format?.duration)
+  return { ...resource, duration: Number.isFinite(duration) && duration > 0 ? duration : undefined }
 }
 
 /**
