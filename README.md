@@ -19,7 +19,6 @@ Environment variables:
 | Variable | Purpose |
 | --- | --- |
 | `DATABASE_URL` | Postgres connection string |
-| `BETTER_AUTH_SECRET` | Random 32+ character string |
 | `CLOUDINARY_CLOUD_NAME` | Your cloud name |
 | `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | Used to sign render jobs (server only) |
 | `CLOUDINARY_UPLOAD_PRESET` | An **unsigned** upload preset for browser uploads |
@@ -38,7 +37,7 @@ pnpm install
 pnpm dev
 ```
 
-Create an account at `/sign-up`, then open **New project**.
+Open the app and click **New project**. There is no login: this is a single-user personal tool, so keep the URL private (anyone with it can use your Cloudinary credits).
 
 ## Getting a transcript
 

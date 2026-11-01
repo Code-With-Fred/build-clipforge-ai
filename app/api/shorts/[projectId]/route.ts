@@ -1,10 +1,10 @@
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
-import { getSession } from '@/lib/auth'
 import { checkClipReady } from '@/lib/cloudinary'
 import { db } from '@/lib/db'
 import { ensureClipTable } from '@/lib/db/ensure'
 import { clip, project } from '@/lib/db/schema'
+import { OWNER_ID } from '@/lib/owner'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -13,12 +13,10 @@ export const maxDuration = 60
 const RENDER_TIMEOUT_MS = 2 * 60 * 60 * 1000
 
 export async function GET(_request: Request, { params }: { params: Promise<{ projectId: string }> }) {
-  const session = await getSession()
-  if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { projectId } = await params
 
   await ensureClipTable()
-  const owned = await db.query.project.findFirst({ where: and(eq(project.id, projectId), eq(project.userId, session.user.id)) })
+  const owned = await db.query.project.findFirst({ where: and(eq(project.id, projectId), eq(project.userId, OWNER_ID)) })
   if (!owned) return NextResponse.json({ error: 'Project not found.' }, { status: 404 })
 
   let clips = await db.select().from(clip).where(eq(clip.projectId, projectId)).orderBy(asc(clip.position))

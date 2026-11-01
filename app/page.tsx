@@ -1,19 +1,16 @@
 import { count, desc, eq } from 'drizzle-orm'
 import ClipforgeDashboard from '@/components/clipforge-dashboard'
-import { getSession } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { ensureClipTable } from '@/lib/db/ensure'
 import { clip, project } from '@/lib/db/schema'
+import { OWNER_ID } from '@/lib/owner'
+
+export const dynamic = 'force-dynamic'
 
 export default async function Page() {
-  const session = await getSession()
-  if (session?.user) await ensureClipTable()
-  const projects = session?.user
-    ? await db.select().from(project).where(eq(project.userId, session.user.id)).orderBy(desc(project.updatedAt))
-    : []
-  const clipCounts = session?.user
-    ? await db.select({ projectId: clip.projectId, total: count() }).from(clip).where(eq(clip.userId, session.user.id)).groupBy(clip.projectId)
-    : []
+  await ensureClipTable()
+  const projects = await db.select().from(project).where(eq(project.userId, OWNER_ID)).orderBy(desc(project.updatedAt))
+  const clipCounts = await db.select({ projectId: clip.projectId, total: count() }).from(clip).where(eq(clip.userId, OWNER_ID)).groupBy(clip.projectId)
   const clipsByProject = new Map(clipCounts.map((row) => [row.projectId, Number(row.total)]))
 
   const dashboardProjects = projects.map((item) => ({
@@ -27,5 +24,5 @@ export default async function Page() {
     gradient: 'from-violet-950 via-indigo-950 to-slate-950',
   }))
 
-  return <ClipforgeDashboard projects={dashboardProjects} user={session?.user} />
+  return <ClipforgeDashboard projects={dashboardProjects} />
 }
