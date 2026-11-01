@@ -23,7 +23,8 @@ Environment variables:
 | `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | Sign browser uploads and render jobs (secret stays server-side) |
 | `CLOUDINARY_URL` | Optional: `cloudinary://key:secret@cloud` instead of the three variables above |
 | `AI_GATEWAY_API_KEY` | Vercel AI Gateway (automatic on Vercel through OIDC) |
-| `OPENAI_API_KEY` | Optional: automatic transcription (Whisper, about $0.36 per hour of video) for burned-in captions, hooks, AI-picked moments and per-short descriptions |
+| `GROQ_API_KEY` | Recommended, **free**: automatic transcription (Whisper large-v3-turbo; free tier ≈ 8 h of audio/day, no card) for captions, hooks, AI-picked moments and descriptions. Get one at console.groq.com |
+| `OPENAI_API_KEY` | Paid alternative to Groq for transcription (~$0.36 per hour of video) |
 | `CLIPFORGE_AI_MODEL` | Optional model override (default `anthropic/claude-sonnet-4.6`) |
 
 No upload preset is needed: the server signs each browser upload with your API secret.
@@ -55,7 +56,7 @@ Content ID claims and copyright strikes no matter how they are edited.
 
 ## Getting a transcript
 
-Automatic when `OPENAI_API_KEY` is set. Otherwise paste one:
+Automatic when `GROQ_API_KEY` (free) or `OPENAI_API_KEY` is set. Otherwise paste one:
 
 
 - YouTube Studio → Subtitles → your video → ⋮ → Download `.srt`

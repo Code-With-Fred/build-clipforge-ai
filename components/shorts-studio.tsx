@@ -256,7 +256,7 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
               audioPublicId = String(uploadedAudio.public_id || '') || undefined
             }
           } else {
-            setNote('Tip: add OPENAI_API_KEY in Vercel for automatic captions, hooks and AI-picked moments (or paste a transcript).')
+            setNote('Tip: add a free GROQ_API_KEY (console.groq.com) in Vercel for automatic captions, hooks and AI-picked moments, or paste a transcript.')
           }
         } catch (audioError) {
           console.warn('Audio extraction failed; continuing without captions', audioError)
@@ -377,7 +377,7 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
             <label className="cursor-pointer text-xs text-violet-300 hover:text-violet-200">Load .srt / .vtt / .txt<input type="file" accept=".srt,.vtt,.txt" className="sr-only" onChange={(event) => loadTranscriptFile(event.target.files?.[0])} /></label>
           </div>
           <textarea value={transcript} disabled={busy} onChange={(event) => setTranscript(event.target.value)} rows={5} placeholder={'Paste a timestamped transcript, e.g. from YouTube "Show transcript":\n0:00\nWelcome back to the channel…\n0:07\nToday we are talking about…'} className={`${inputClass} font-mono text-xs`} />
-          <p className="mt-2 text-xs text-[#777a86]">{transcript.trim() ? 'Your transcript will be used for the AI picks, captions, hooks, titles and descriptions.' : 'Leave empty to transcribe automatically (needs OPENAI_API_KEY in Vercel). Without either, clips are spread evenly and have no captions.'} Tip: YouTube Studio → Subtitles → download the .srt.</p>
+          <p className="mt-2 text-xs text-[#777a86]">{transcript.trim() ? 'Your transcript will be used for the AI picks, captions, hooks, titles and descriptions.' : 'Leave empty to transcribe automatically (needs a free GROQ_API_KEY in Vercel). Without either, clips are spread evenly and have no captions.'} Tip: YouTube Studio → Subtitles → download the .srt.</p>
         </div>
 
         <div className="grid gap-4 rounded-2xl border border-white/[0.08] bg-[#111216] p-4 sm:grid-cols-2">

@@ -79,7 +79,7 @@ export async function POST(request: Request) {
   let transcriptNote: string | undefined
   if (!segments.length && input.audioPublicId) {
     if (!transcriptionAvailable()) {
-      transcriptNote = 'Add OPENAI_API_KEY in Vercel to get automatic captions, hooks and AI-picked moments.'
+      transcriptNote = 'Add a free GROQ_API_KEY (console.groq.com) in Vercel to get automatic captions, hooks and AI-picked moments.'
     } else {
       try {
         const audioUrl = `https://res.cloudinary.com/${config.cloudName}/video/upload/${input.audioPublicId.split('/').map(encodeURIComponent).join('/')}.mp3`
