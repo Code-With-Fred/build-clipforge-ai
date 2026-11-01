@@ -1,10 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, Copy, Download, FileText, Loader2, Upload, WandSparkles } from 'lucide-react'
+import { Captions, Check, Copy, Download, FileText, Loader2, ShieldCheck, Upload, WandSparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { formatTimestamp, type CropMode } from '@/lib/shorts'
-import { parseSizeLimit, rememberedSizeLimit, rememberSizeLimit, splitVideo } from '@/lib/split-video'
+import { extractAudio, parseSizeLimit, rememberedSizeLimit, rememberSizeLimit, splitVideo } from '@/lib/split-video'
 
 type ClipView = {
   id: string
@@ -16,11 +16,15 @@ type ClipView = {
   url: string
   status: string
   detail?: string
+  hook?: string
+  description?: string
+  hashtags?: string
+  captions?: string
 }
 
 type ProjectView = { id: string; name: string; status: string; duration: number }
 
-type Stage = 'idle' | 'splitting' | 'uploading' | 'planning' | 'rendering' | 'done' | 'failed'
+type Stage = 'idle' | 'splitting' | 'uploading' | 'audio' | 'planning' | 'rendering' | 'done' | 'failed'
 
 type UploadedSource = { publicId: string; bytes: number; duration?: number }
 
@@ -130,6 +134,10 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
   const [crop, setCrop] = useState<CropMode>('center')
   const [grayscale, setGrayscale] = useState(false)
   const [transcript, setTranscript] = useState('')
+  const [captionsOn, setCaptionsOn] = useState(true)
+  const [hookOn, setHookOn] = useState(true)
+  const [sourceCredit, setSourceCredit] = useState('')
+  const [rightsConfirmed, setRightsConfirmed] = useState(false)
   const [stage, setStage] = useState<Stage>(initialProjectId ? 'rendering' : 'idle')
   const [uploadProgress, setUploadProgress] = useState(0)
   const [error, setError] = useState('')
@@ -142,7 +150,7 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [partLabel, setPartLabel] = useState('')
-  const busy = stage === 'splitting' || stage === 'uploading' || stage === 'planning'
+  const busy = stage === 'splitting' || stage === 'uploading' || stage === 'audio' || stage === 'planning'
   const readyCount = clips.filter((item) => item.status === 'ready').length
 
   const poll = useCallback(async (id: string) => {
@@ -234,6 +242,27 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
       }
       setPartLabel('')
 
+      // Auto-transcription: pull a small audio track in the browser and upload it, so the
+      // server can transcribe it for captions, hooks and AI moment picking.
+      let audioPublicId: string | undefined
+      if (file && !transcript.trim() && (captionsOn || hookOn)) {
+        try {
+          const settings = await readJson(await fetch('/api/cloudinary/config', { cache: 'no-store' }))
+          if (settings.transcription) {
+            setStage('audio'); setUploadProgress(0)
+            const audio = await extractAudio(file, (fraction) => setUploadProgress(fraction * 0.7))
+            if (audio) {
+              const uploadedAudio = await uploadToCloudinary(audio, (fraction) => setUploadProgress(0.7 + fraction * 0.3))
+              audioPublicId = String(uploadedAudio.public_id || '') || undefined
+            }
+          } else {
+            setNote('Tip: add OPENAI_API_KEY in Vercel for automatic captions, hooks and AI-picked moments (or paste a transcript).')
+          }
+        } catch (audioError) {
+          console.warn('Audio extraction failed; continuing without captions', audioError)
+        }
+      }
+
       setStage('planning')
       const name = file ? file.name.replace(/\.[^.]+$/, '') : decodeURIComponent(new URL(url).pathname.split('/').pop() || 'Remote video').replace(/\.[^.]+$/, '')
       const response = await fetch('/api/shorts', {
@@ -248,6 +277,11 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
           crop,
           grayscale,
           transcript: transcript.trim() || undefined,
+          audioPublicId,
+          captions: captionsOn,
+          hook: hookOn,
+          sourceCredit: sourceCredit.trim() || undefined,
+          rightsConfirmed,
         }),
       })
       const body = await readJson(response)
@@ -279,10 +313,20 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
     setDownloadingAll(false)
   }
 
-  const copyTitle = async (item: ClipView) => {
-    await navigator.clipboard.writeText(item.title).catch(() => undefined)
-    setCopied(item.id)
+  const copyText = async (key: string, text: string) => {
+    await navigator.clipboard.writeText(text).catch(() => undefined)
+    setCopied(key)
     setTimeout(() => setCopied(''), 1500)
+  }
+  const youtubeDescription = (item: ClipView) => [item.description, item.hashtags].filter(Boolean).join('\n\n')
+  const downloadSrt = (item: ClipView) => {
+    if (!item.captions) return
+    const href = URL.createObjectURL(new Blob([item.captions], { type: 'application/x-subrip' }))
+    const link = document.createElement('a')
+    link.href = href
+    link.download = `${String(item.position).padStart(2, '0')}-captions.srt`
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(href), 5000)
   }
 
   const inputClass = 'mt-2 w-full rounded-xl border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none focus:border-violet-300/50'
@@ -329,18 +373,27 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
 
         <div className="rounded-2xl border border-white/[0.08] bg-[#111216] p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-medium text-[#c7c8d0]"><FileText className="mr-1 inline size-3.5" /> Transcript (optional, but this is what makes the AI pick the best moments)</p>
+            <p className="text-xs font-medium text-[#c7c8d0]"><FileText className="mr-1 inline size-3.5" /> Transcript (optional: pasted, or created automatically)</p>
             <label className="cursor-pointer text-xs text-violet-300 hover:text-violet-200">Load .srt / .vtt / .txt<input type="file" accept=".srt,.vtt,.txt" className="sr-only" onChange={(event) => loadTranscriptFile(event.target.files?.[0])} /></label>
           </div>
           <textarea value={transcript} disabled={busy} onChange={(event) => setTranscript(event.target.value)} rows={5} placeholder={'Paste a timestamped transcript, e.g. from YouTube "Show transcript":\n0:00\nWelcome back to the channel…\n0:07\nToday we are talking about…'} className={`${inputClass} font-mono text-xs`} />
-          <p className="mt-2 text-xs text-[#777a86]">{transcript.trim() ? 'AI will choose the strongest standalone moments and write a title for each.' : 'Without a transcript the clips are spread evenly across the video.'} Tip: YouTube Studio → Subtitles → download the .srt.</p>
+          <p className="mt-2 text-xs text-[#777a86]">{transcript.trim() ? 'Your transcript will be used for the AI picks, captions, hooks, titles and descriptions.' : 'Leave empty to transcribe automatically (needs OPENAI_API_KEY in Vercel). Without either, clips are spread evenly and have no captions.'} Tip: YouTube Studio → Subtitles → download the .srt.</p>
         </div>
 
-        <Button onClick={start} disabled={busy || (!file && !remoteUrl.trim())} className="h-11 gap-2 rounded-xl bg-violet-500 px-5 hover:bg-violet-400">
+        <div className="grid gap-4 rounded-2xl border border-white/[0.08] bg-[#111216] p-4 sm:grid-cols-2">
+          <label className="flex items-center gap-2 text-sm text-[#c7c8d0]"><input type="checkbox" checked={captionsOn} disabled={busy} onChange={(event) => setCaptionsOn(event.target.checked)} /> <Captions className="size-4 text-violet-300" /> Burn in captions</label>
+          <label className="flex items-center gap-2 text-sm text-[#c7c8d0]"><input type="checkbox" checked={hookOn} disabled={busy} onChange={(event) => setHookOn(event.target.checked)} /> <WandSparkles className="size-4 text-violet-300" /> Hook text for the first 3 seconds</label>
+          <label className="text-xs text-[#a8aab4] sm:col-span-2">Source credit (added to every description)
+            <input value={sourceCredit} disabled={busy} onChange={(event) => setSourceCredit(event.target.value)} placeholder="e.g. From the full episode on @MyPodcast — youtube.com/watch?v=…" className={inputClass} />
+          </label>
+          <label className="flex items-start gap-2 text-sm text-[#c7c8d0] sm:col-span-2"><input type="checkbox" className="mt-1" checked={rightsConfirmed} disabled={busy} onChange={(event) => setRightsConfirmed(event.target.checked)} /> <span><ShieldCheck className="mr-1 inline size-4 text-emerald-300" />I own this video or have the creator&apos;s permission to clip and post it. <span className="text-xs text-[#777a86]">(Clips of content you don&apos;t have rights to get Content ID claims and copyright strikes.)</span></span></label>
+        </div>
+
+        <Button onClick={start} disabled={busy || !rightsConfirmed || (!file && !remoteUrl.trim())} className="h-11 gap-2 rounded-xl bg-violet-500 px-5 hover:bg-violet-400">
           {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <WandSparkles data-icon="inline-start" />}
-          {stage === 'splitting' ? `Splitting large video ${Math.round(uploadProgress * 100)}%` : stage === 'uploading' ? `Uploading${partLabel ? ` ${partLabel}` : ''} ${Math.round(uploadProgress * 100)}%` : stage === 'planning' ? (transcript.trim() ? 'AI is picking moments…' : 'Planning clips…') : `Create ${count} shorts`}
+          {stage === 'splitting' ? `Splitting large video ${Math.round(uploadProgress * 100)}%` : stage === 'uploading' ? `Uploading${partLabel ? ` ${partLabel}` : ''} ${Math.round(uploadProgress * 100)}%` : stage === 'audio' ? `Preparing captions ${Math.round(uploadProgress * 100)}%` : stage === 'planning' ? 'Transcribing and picking the best moments…' : `Create ${count} shorts`}
         </Button>
-        {(stage === 'uploading' || stage === 'splitting') && <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.08]"><div className="h-full bg-gradient-to-r from-violet-500 to-indigo-400 transition-all" style={{ width: `${Math.round(uploadProgress * 100)}%` }} /></div>}
+        {(stage === 'uploading' || stage === 'splitting' || stage === 'audio') && <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.08]"><div className="h-full bg-gradient-to-r from-violet-500 to-indigo-400 transition-all" style={{ width: `${Math.round(uploadProgress * 100)}%` }} /></div>}
         {(stage === 'uploading' || stage === 'splitting') && <p className="text-xs text-[#777a86]">{stage === 'splitting' ? 'Your file is bigger than your Cloudinary plan allows, so it is being split into parts in your browser (no quality loss). ' : ''}Keep this tab open until the upload finishes. Rendering happens on Cloudinary afterwards, so you can leave once it starts.</p>}
       </section>}
 
@@ -364,15 +417,22 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
             <div className="relative aspect-[9/16] bg-black">
               {item.status === 'ready'
                 ? <video src={item.url} controls preload="metadata" playsInline className="h-full w-full object-contain" />
-                : <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-[#858894]"><Loader2 className="size-5 animate-spin text-violet-300" />Rendering…</div>}
+                : <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-[#858894]"><Loader2 className="size-5 animate-spin text-violet-300" />{item.status === 'finishing' ? 'Adding captions…' : 'Rendering…'}</div>}
               <span className="absolute left-2 top-2 rounded-md bg-black/60 px-2 py-1 text-[10px] text-white/80">#{item.position} · {formatTimestamp(item.start)}–{formatTimestamp(item.start + item.duration)}</span>
             </div>
             <div className="p-3">
               <p className="text-sm font-medium leading-snug">{item.title}</p>
-              {item.reason && <p className="mt-1 text-xs text-[#858894]">{item.reason}</p>}
-              <div className="mt-3 flex gap-2">
+              {item.hook && <p className="mt-1 text-xs text-violet-200">Hook: “{item.hook}”</p>}
+              {item.description
+                ? <p className="mt-1 line-clamp-3 whitespace-pre-line text-xs text-[#858894]">{item.description}</p>
+                : item.reason && <p className="mt-1 text-xs text-[#858894]">{item.reason}</p>}
+              {item.hashtags && <p className="mt-1 text-xs text-sky-300">{item.hashtags}</p>}
+              {item.detail && <p className="mt-1 text-xs text-amber-200">{item.detail}</p>}
+              <div className="mt-3 flex flex-wrap gap-2">
                 <Button size="sm" disabled={item.status !== 'ready'} onClick={() => downloadClip(item, projectView?.name || 'short')} className="gap-1.5 rounded-lg bg-violet-500 hover:bg-violet-400"><Download data-icon="inline-start" />MP4</Button>
-                <Button size="sm" variant="outline" onClick={() => copyTitle(item)} className="gap-1.5 rounded-lg border-white/[0.1] bg-transparent">{copied === item.id ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}Title</Button>
+                <Button size="sm" variant="outline" onClick={() => copyText(`${item.id}:title`, item.title)} className="gap-1.5 rounded-lg border-white/[0.1] bg-transparent">{copied === `${item.id}:title` ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}Title</Button>
+                <Button size="sm" variant="outline" onClick={() => copyText(`${item.id}:desc`, youtubeDescription(item) || item.title)} className="gap-1.5 rounded-lg border-white/[0.1] bg-transparent">{copied === `${item.id}:desc` ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}Description</Button>
+                {item.captions && <Button size="sm" variant="outline" onClick={() => downloadSrt(item)} className="gap-1.5 rounded-lg border-white/[0.1] bg-transparent"><Captions data-icon="inline-start" />.srt</Button>}
               </div>
             </div>
           </article>)}

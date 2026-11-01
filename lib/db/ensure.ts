@@ -4,7 +4,7 @@ import { db } from '@/lib/db'
 let ready: Promise<void> | null = null
 
 /**
- * The project has no migration runner, so create the `clip` table on first use.
+ * The project has no migration runner, so create (and extend) the `clip` table on first use.
  * Idempotent and memoized per server instance. Mirrors `clip` in lib/db/schema.ts.
  */
 export function ensureClipTable() {
@@ -25,6 +25,13 @@ export function ensureClipTable() {
       "updatedAt" timestamp NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS "clip_projectId_idx" ON "clip" ("projectId");
+    ALTER TABLE "clip" ADD COLUMN IF NOT EXISTS "renderUrl" text;
+    ALTER TABLE "clip" ADD COLUMN IF NOT EXISTS "hook" text NOT NULL DEFAULT '';
+    ALTER TABLE "clip" ADD COLUMN IF NOT EXISTS "description" text NOT NULL DEFAULT '';
+    ALTER TABLE "clip" ADD COLUMN IF NOT EXISTS "hashtags" text NOT NULL DEFAULT '';
+    ALTER TABLE "clip" ADD COLUMN IF NOT EXISTS "captions" text NOT NULL DEFAULT '';
+    ALTER TABLE "clip" ADD COLUMN IF NOT EXISTS "finishing" text NOT NULL DEFAULT '';
+    ALTER TABLE "clip" ADD COLUMN IF NOT EXISTS "detail" text NOT NULL DEFAULT '';
   `).then(() => undefined, (error) => { ready = null; throw error })
   return ready
 }

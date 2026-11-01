@@ -7,6 +7,9 @@ const pickSchema = z.object({
     start: z.number().describe('Clip start time in seconds, taken from the transcript tags.'),
     title: z.string().describe('YouTube Shorts title, under 70 characters.'),
     reason: z.string().describe('One sentence on why this moment works as a standalone short.'),
+    hook: z.string().describe('On-screen hook for the first 3 seconds: 3-8 punchy words, no emojis, no hashtags.'),
+    description: z.string().describe('YouTube description for this short: 2-3 sentences in plain language about what is said in it. No hashtags.'),
+    hashtags: z.string().describe('3-5 relevant hashtags separated by spaces, starting with #Shorts.'),
   })),
 })
 
@@ -42,7 +45,9 @@ Rules:
 - Start at the beginning of a sentence or thought, not mid-word. Favour strong hooks, surprising claims, stories, punchlines, clear tips, and emotional peaks.
 - Each clip must make sense with no other context.
 - Spread picks across the whole video when quality is similar.
-- Titles: honest, specific, curiosity-driving, under 70 characters, no hashtags.
+- Titles: honest, specific, curiosity-driving, under 70 characters, no hashtags. Every title must be different.
+- Hooks: a short line that makes someone stop scrolling, true to what is said in the clip.
+- Descriptions: unique per clip, written for that clip only, faithful to the transcript. Never invent facts, quotes, or names.
 
 Transcript (each line tagged with its start time in seconds):
 ${transcriptForPrompt(segments)}`,

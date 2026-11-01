@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { cloudinaryText } from '@/lib/captions'
 import type { CropMode } from '@/lib/shorts'
 
 type CloudinaryConfig = {
@@ -120,12 +121,56 @@ export async function queueClipRenders(config: CloudinaryConfig, publicId: strin
  * A clip is ready when its delivery URL answers 200. While the eager job is still
  * running, Cloudinary answers 4xx (typically 423, or 400 "too large to process synchronously").
  */
-export async function checkClipReady(url: string): Promise<{ ready: boolean; detail?: string }> {
+export async function checkClipReady(url: string): Promise<{ ready: boolean; status?: number; detail?: string }> {
   try {
     const response = await fetch(url, { method: 'HEAD', cache: 'no-store', signal: AbortSignal.timeout(15_000) })
-    if (response.ok) return { ready: true }
-    return { ready: false, detail: response.headers.get('x-cld-error') || `HTTP ${response.status}` }
+    if (response.ok) return { ready: true, status: response.status }
+    return { ready: false, status: response.status, detail: response.headers.get('x-cld-error') || `HTTP ${response.status}` }
   } catch (error) {
     return { ready: false, detail: error instanceof Error ? error.message : 'Network error' }
   }
+}
+
+/** Server-side signed upload of a remote URL or data URI. Overwrites the same public ID. */
+async function serverUpload(config: CloudinaryConfig, resourceType: 'video' | 'raw', file: string, publicId: string) {
+  const params: Record<string, string> = { overwrite: 'true', public_id: publicId, timestamp: String(Math.floor(Date.now() / 1000)) }
+  const body = new URLSearchParams({ ...params, file, api_key: config.apiKey, signature: sign(params, config.apiSecret) })
+  const response = await fetch(`https://api.cloudinary.com/v1_1/${config.cloudName}/${resourceType}/upload`, {
+    method: 'POST',
+    body,
+    signal: AbortSignal.timeout(50_000),
+  })
+  if (!response.ok) throw new Error(await cloudinaryError(response))
+  return await response.json() as { public_id: string; secure_url: string; duration?: number }
+}
+
+/**
+ * Save a rendered short as its own asset. Its timeline then starts at 0, so caption and
+ * hook timings are unambiguous, and it is small enough for on-the-fly transformations.
+ */
+export function saveRenderedClip(config: CloudinaryConfig, renderedUrl: string, publicId: string) {
+  return serverUpload(config, 'video', renderedUrl, publicId)
+}
+
+/** Upload an SRT file as a raw asset; `publicId` must end in `.srt`. */
+export function uploadCaptions(config: CloudinaryConfig, srt: string, publicId: string) {
+  return serverUpload(config, 'raw', `data:text/plain;base64,${Buffer.from(srt, 'utf8').toString('base64')}`, publicId)
+}
+
+/**
+ * Burn captions (lower third, above the Shorts UI) and a 3-second hook (top) onto a
+ * saved short. Applied on-the-fly to the small clip asset, whose time 0 is the short's start.
+ */
+export function finishingTransformation(options: { captionsPublicId?: string; hookText?: string }) {
+  const steps: string[] = []
+  if (options.captionsPublicId) {
+    steps.push(`l_subtitles:Arial_64_bold:${options.captionsPublicId.replace(/\//g, ':')},co_white,b_rgb:000000aa`)
+    steps.push('fl_layer_apply,g_south,y_480')
+  }
+  if (options.hookText) {
+    steps.push(`l_text:Arial_68_bold_center:${cloudinaryText(options.hookText)},co_white,b_rgb:000000c0,c_fit,w_940`)
+    steps.push('fl_layer_apply,g_north,y_240,so_0,eo_3')
+  }
+  steps.push('q_auto,vc_h264,ac_aac')
+  return steps.join('/')
 }

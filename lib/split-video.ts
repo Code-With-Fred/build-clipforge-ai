@@ -119,6 +119,41 @@ export async function* splitVideo(
   }
 }
 
+/**
+ * Extract a compact speech-quality audio track (mono, 16 kHz, 32 kbps MP3: ~14 MB per hour)
+ * for transcription. Reads the file lazily, so it works for multi-GB videos.
+ */
+export async function extractAudio(file: File, onProgress?: (fraction: number) => void): Promise<File | null> {
+  const ffmpeg = await getFFmpeg()
+  const logs: string[] = []
+  const onLog = ({ message }: { message?: string }) => { if (message) logs.push(message) }
+  const progress = ({ progress: value }: { progress?: number }) => {
+    if (typeof value === 'number' && value >= 0 && value <= 1) onProgress?.(value)
+  }
+  ffmpeg.on('log', onLog)
+  ffmpeg.on('progress', progress)
+  try { await ffmpeg.createDir(MOUNT) } catch { /* already exists */ }
+  await ffmpeg.mount('WORKERFS', { files: [file] }, MOUNT)
+  const output = '/audio.mp3'
+  try {
+    const code = await ffmpeg.exec([
+      '-hide_banner', '-i', `${MOUNT}/${file.name}`,
+      '-vn', '-map', '0:a:0?', '-ac', '1', '-ar', '16000', '-c:a', 'libmp3lame', '-b:a', '32k',
+      output,
+    ])
+    if (code !== 0) return null
+    const data = await ffmpeg.readFile(output)
+    const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
+    if (!bytes.length) return null // video without an audio track
+    return new File([bytes as BlobPart], `${file.name.replace(/\.[^.]+$/, '')}-audio.mp3`, { type: 'audio/mpeg' })
+  } finally {
+    ffmpeg.off('log', onLog)
+    ffmpeg.off('progress', progress)
+    await ffmpeg.deleteFile(output).catch(() => undefined)
+    try { await ffmpeg.unmount(MOUNT) } catch { /* ignore */ }
+  }
+}
+
 /** Parses Cloudinary's "File size too large. Got X. Maximum is Y." into Y (bytes). */
 export function parseSizeLimit(message: string) {
   const match = message.match(/Maximum is (\d+)/i)
