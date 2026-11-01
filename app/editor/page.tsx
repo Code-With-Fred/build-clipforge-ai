@@ -1,13 +1,10 @@
-import { HighlightGenerator } from '@/components/highlight-generator'
-import { VideoCutter } from '@/components/video-cutter'
+import { redirect } from 'next/navigation'
+import { ShortsStudio } from '@/components/shorts-studio'
+import { getSession } from '@/lib/auth'
 
-export default function EditorPage() {
-  return (
-    <main>
-      <VideoCutter />
-      <div className="mx-auto max-w-3xl px-6 pb-16">
-        <HighlightGenerator />
-      </div>
-    </main>
-  )
+export default async function EditorPage({ searchParams }: { searchParams: Promise<{ project?: string }> }) {
+  const session = await getSession()
+  if (!session?.user) redirect('/sign-in')
+  const { project } = await searchParams
+  return <ShortsStudio initialProjectId={typeof project === 'string' ? project : undefined} />
 }

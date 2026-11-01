@@ -1,0 +1,333 @@
+'use client'
+
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Check, Copy, Download, FileText, Loader2, Upload, WandSparkles } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { formatTimestamp, type CropMode } from '@/lib/shorts'
+
+type ClipView = {
+  id: string
+  position: number
+  start: number
+  duration: number
+  title: string
+  reason: string
+  url: string
+  status: string
+  detail?: string
+}
+
+type ProjectView = { id: string; name: string; status: string; duration: number }
+
+type Stage = 'idle' | 'uploading' | 'planning' | 'rendering' | 'done' | 'failed'
+
+const CHUNK_SIZE = 20 * 1024 * 1024 // Cloudinary chunked upload: >= 5 MB per chunk except the last.
+const POLL_MS = 8000
+
+async function readJson(response: Response) {
+  return await response.json().catch(() => ({})) as Record<string, unknown>
+}
+
+function cloudinaryMessage(body: Record<string, unknown>, fallback: string) {
+  const error = body.error as { message?: string } | string | undefined
+  return typeof error === 'string' ? error : error?.message || fallback
+}
+
+async function withRetry<T>(task: () => Promise<T>, attempts = 4) {
+  let lastError: unknown
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try { return await task() } catch (error) {
+      lastError = error
+      if (error instanceof Error && error.name === 'FatalUploadError') break
+      await new Promise((resolve) => setTimeout(resolve, 1500 * 2 ** attempt))
+    }
+  }
+  throw lastError
+}
+
+function fatal(message: string) {
+  const error = new Error(message)
+  error.name = 'FatalUploadError'
+  return error
+}
+
+/** Upload straight from the browser to Cloudinary in 20 MB chunks (bypasses Vercel's 4.5 MB body limit). */
+async function uploadToCloudinary(source: File | string, onProgress: (fraction: number) => void) {
+  const configResponse = await fetch('/api/cloudinary/config')
+  const config = await readJson(configResponse)
+  if (!configResponse.ok) throw new Error(String(config.error || 'Cloudinary is not configured.'))
+  const endpoint = `https://api.cloudinary.com/v1_1/${config.cloudName}/video/upload`
+
+  const send = async (body: FormData, headers?: Record<string, string>) => {
+    const response = await fetch(endpoint, { method: 'POST', body, headers })
+    const result = await readJson(response)
+    if (response.status >= 400 && response.status < 500) throw fatal(cloudinaryMessage(result, 'Cloudinary rejected the upload.'))
+    if (!response.ok) throw new Error(cloudinaryMessage(result, `Upload failed (${response.status}).`))
+    return result
+  }
+  const baseForm = () => {
+    const form = new FormData()
+    form.append('upload_preset', String(config.uploadPreset))
+    form.append('folder', 'clipforge/source')
+    return form
+  }
+
+  if (typeof source === 'string') {
+    const form = baseForm()
+    form.append('file', source)
+    onProgress(0.5)
+    const result = await withRetry(() => send(form), 2)
+    onProgress(1)
+    return result
+  }
+
+  const uploadId = crypto.randomUUID()
+  let result: Record<string, unknown> = {}
+  for (let start = 0; start < source.size; start += CHUNK_SIZE) {
+    const end = Math.min(start + CHUNK_SIZE, source.size)
+    result = await withRetry(() => {
+      const form = baseForm()
+      form.append('file', source.slice(start, end), source.name)
+      return send(form, { 'X-Unique-Upload-Id': uploadId, 'Content-Range': `bytes ${start}-${end - 1}/${source.size}` })
+    })
+    onProgress(end / source.size)
+  }
+  return result
+}
+
+async function downloadClip(clip: ClipView, projectName: string) {
+  const safeName = `${String(clip.position).padStart(2, '0')}-${(clip.title || projectName).replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, 60) || 'short'}.mp4`
+  try {
+    const response = await fetch(clip.url)
+    if (!response.ok) throw new Error(String(response.status))
+    const href = URL.createObjectURL(await response.blob())
+    const link = document.createElement('a')
+    link.href = href
+    link.download = safeName
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(href), 10_000)
+  } catch {
+    window.open(clip.url, '_blank', 'noopener')
+  }
+}
+
+export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }) {
+  const [file, setFile] = useState<File | null>(null)
+  const [remoteUrl, setRemoteUrl] = useState('')
+  const [count, setCount] = useState(12)
+  const [clipDuration, setClipDuration] = useState(60)
+  const [crop, setCrop] = useState<CropMode>('center')
+  const [grayscale, setGrayscale] = useState(false)
+  const [transcript, setTranscript] = useState('')
+  const [stage, setStage] = useState<Stage>(initialProjectId ? 'rendering' : 'idle')
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [error, setError] = useState('')
+  const [note, setNote] = useState('')
+  const [projectId, setProjectId] = useState(initialProjectId || '')
+  const [projectView, setProjectView] = useState<ProjectView | null>(null)
+  const [clips, setClips] = useState<ClipView[]>([])
+  const [copied, setCopied] = useState('')
+  const [downloadingAll, setDownloadingAll] = useState(false)
+  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const busy = stage === 'uploading' || stage === 'planning'
+  const readyCount = clips.filter((item) => item.status === 'ready').length
+
+  const poll = useCallback(async (id: string) => {
+    try {
+      const response = await fetch(`/api/shorts/${id}`, { cache: 'no-store' })
+      const body = await readJson(response)
+      if (!response.ok) throw new Error(String(body.error || 'Could not load the project.'))
+      const nextProject = body.project as ProjectView
+      const nextClips = body.clips as ClipView[]
+      setProjectView(nextProject)
+      setClips(nextClips)
+      if (nextProject.status === 'ready') { setStage('done'); return }
+      if (nextProject.status === 'failed') {
+        setStage('failed')
+        setError('Cloudinary did not finish every clip. Ready clips can still be downloaded; create the project again to retry the rest.')
+        return
+      }
+      setStage('rendering')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Status check failed. Retrying…')
+    }
+    pollTimer.current = setTimeout(() => poll(id), POLL_MS)
+  }, [])
+
+  useEffect(() => {
+    if (projectId) poll(projectId)
+    return () => { if (pollTimer.current) clearTimeout(pollTimer.current) }
+  }, [projectId, poll])
+
+  const loadTranscriptFile = async (picked: File | undefined) => {
+    if (picked) setTranscript(await picked.text())
+  }
+
+  const start = async () => {
+    const url = remoteUrl.trim()
+    if (!file && !url) return
+    if (!file && /(^|\.)(youtube\.com|youtu\.be)$/.test(new URL(url).hostname)) {
+      setError('YouTube watch links are web pages, not video files. Download the video (e.g. from YouTube Studio) and upload the file instead.')
+      return
+    }
+    setError(''); setNote(''); setClips([]); setProjectView(null); setUploadProgress(0)
+    try {
+      setStage('uploading')
+      const uploaded = await uploadToCloudinary(file ?? url, setUploadProgress)
+      const publicId = String(uploaded.public_id || '')
+      if (!publicId) throw new Error('Cloudinary did not return a video ID.')
+
+      setStage('planning')
+      const name = file ? file.name.replace(/\.[^.]+$/, '') : decodeURIComponent(new URL(url).pathname.split('/').pop() || 'Remote video').replace(/\.[^.]+$/, '')
+      const response = await fetch('/api/shorts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          publicId,
+          name: name.slice(0, 200) || 'Untitled video',
+          sourceLabel: file ? file.name : url,
+          bytes: Number(uploaded.bytes) || file?.size || 0,
+          count,
+          clipDuration,
+          crop,
+          grayscale,
+          transcript: transcript.trim() || undefined,
+        }),
+      })
+      const body = await readJson(response)
+      if (!response.ok) throw new Error(String(body.error || 'Could not create the shorts.'))
+      if (body.mode === 'even' && transcript.trim()) setNote(String(body.note || 'The transcript had too few timestamps, so clips were spread evenly.'))
+      else if (body.note) setNote(String(body.note))
+      const id = String(body.projectId)
+      window.history.replaceState(null, '', `/editor?project=${id}`)
+      setStage('rendering')
+      setProjectId(id)
+    } catch (caught) {
+      setStage('failed')
+      setError(caught instanceof Error && caught.message !== 'Failed to fetch' ? caught.message : 'Network error while talking to Cloudinary. Check your connection and try again.')
+    }
+  }
+
+  const reset = () => {
+    if (pollTimer.current) clearTimeout(pollTimer.current)
+    window.history.replaceState(null, '', '/editor')
+    setProjectId(''); setProjectView(null); setClips([]); setStage('idle'); setError(''); setNote(''); setFile(null); setRemoteUrl(''); setUploadProgress(0)
+  }
+
+  const downloadAll = async () => {
+    setDownloadingAll(true)
+    for (const item of clips.filter((entry) => entry.status === 'ready')) {
+      await downloadClip(item, projectView?.name || 'short')
+      await new Promise((resolve) => setTimeout(resolve, 600))
+    }
+    setDownloadingAll(false)
+  }
+
+  const copyTitle = async (item: ClipView) => {
+    await navigator.clipboard.writeText(item.title).catch(() => undefined)
+    setCopied(item.id)
+    setTimeout(() => setCopied(''), 1500)
+  }
+
+  const inputClass = 'mt-2 w-full rounded-xl border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none focus:border-violet-300/50'
+  const showForm = !projectId
+
+  return <main className="min-h-screen bg-[#090a0d] px-4 py-10 text-[#f4f4f5] sm:px-8">
+    <div className="mx-auto max-w-4xl">
+      <a href="/" className="text-xs text-[#858894] transition-colors hover:text-white">← Back to dashboard</a>
+      <p className="mt-8 text-xs font-semibold uppercase tracking-[0.2em] text-violet-300">ClipForge AI</p>
+      <h1 className="mt-3 text-3xl font-semibold tracking-tight">Long video → YouTube Shorts</h1>
+      <p className="mt-2 text-sm text-[#858894]">Upload a long video (an hour or more works) and get {count} vertical 1080×1920 shorts ready for YouTube.</p>
+
+      {showForm && <section className="mt-8 space-y-4">
+        <label htmlFor="source-file" className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-violet-300/30 bg-violet-400/[0.05] px-6 py-12 text-center hover:bg-violet-400/[0.09]">
+          <Upload className="text-violet-300" />
+          <span className="mt-3 text-sm font-medium">{file ? file.name : 'Choose a video file'}</span>
+          <span className="mt-1 text-xs text-[#777a86]">{file ? `${(file.size / 1024 / 1024).toFixed(0)} MB` : 'MP4, MOV, MKV, WEBM — uploaded in chunks straight to Cloudinary'}</span>
+          <input id="source-file" type="file" accept="video/*,.mov,.m4v,.mp4,.webm,.mkv" className="sr-only" disabled={busy} onChange={(event) => { const picked = event.target.files?.[0]; if (picked) { setFile(picked); setRemoteUrl(''); setError('') } }} />
+        </label>
+
+        <div className="rounded-2xl border border-white/[0.08] bg-[#111216] p-4">
+          <label htmlFor="video-url" className="text-xs font-medium text-[#c7c8d0]">…or paste a direct video file URL</label>
+          <input id="video-url" type="url" value={remoteUrl} disabled={busy} onChange={(event) => { setRemoteUrl(event.target.value); if (event.target.value) setFile(null) }} placeholder="https://cdn.example.com/podcast.mp4" className={inputClass} />
+        </div>
+
+        <div className="grid gap-4 rounded-2xl border border-white/[0.08] bg-[#111216] p-4 sm:grid-cols-2">
+          <label className="text-xs text-[#a8aab4]">Number of shorts: <span className="font-semibold text-white">{count}</span>
+            <input type="range" min={10} max={15} value={count} disabled={busy} onChange={(event) => setCount(Number(event.target.value))} className="mt-3 w-full accent-violet-400" />
+          </label>
+          <label className="text-xs text-[#a8aab4]">Length of each short
+            <select value={clipDuration} disabled={busy} onChange={(event) => setClipDuration(Number(event.target.value))} className={inputClass}>
+              {[30, 45, 60, 90, 120, 180].map((seconds) => <option key={seconds} value={seconds} className="bg-[#111216]">{seconds < 60 ? `${seconds} seconds` : `${seconds / 60} minute${seconds > 60 ? 's' : ''}`}</option>)}
+            </select>
+          </label>
+          <label className="text-xs text-[#a8aab4]">Vertical framing
+            <select value={crop} disabled={busy} onChange={(event) => setCrop(event.target.value as CropMode)} className={inputClass}>
+              <option value="center" className="bg-[#111216]">Center crop (fills the screen)</option>
+              <option value="smart" className="bg-[#111216]">Smart crop (follows faces/action)</option>
+              <option value="blur" className="bg-[#111216]">Full frame on blurred background</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 self-end pb-2 text-sm text-[#c7c8d0]"><input type="checkbox" checked={grayscale} disabled={busy} onChange={(event) => setGrayscale(event.target.checked)} /> Black-and-white grade</label>
+        </div>
+
+        <div className="rounded-2xl border border-white/[0.08] bg-[#111216] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-medium text-[#c7c8d0]"><FileText className="mr-1 inline size-3.5" /> Transcript (optional, but this is what makes the AI pick the best moments)</p>
+            <label className="cursor-pointer text-xs text-violet-300 hover:text-violet-200">Load .srt / .vtt / .txt<input type="file" accept=".srt,.vtt,.txt" className="sr-only" onChange={(event) => loadTranscriptFile(event.target.files?.[0])} /></label>
+          </div>
+          <textarea value={transcript} disabled={busy} onChange={(event) => setTranscript(event.target.value)} rows={5} placeholder={'Paste a timestamped transcript, e.g. from YouTube "Show transcript":\n0:00\nWelcome back to the channel…\n0:07\nToday we are talking about…'} className={`${inputClass} font-mono text-xs`} />
+          <p className="mt-2 text-xs text-[#777a86]">{transcript.trim() ? 'AI will choose the strongest standalone moments and write a title for each.' : 'Without a transcript the clips are spread evenly across the video.'} Tip: YouTube Studio → Subtitles → download the .srt.</p>
+        </div>
+
+        <Button onClick={start} disabled={busy || (!file && !remoteUrl.trim())} className="h-11 gap-2 rounded-xl bg-violet-500 px-5 hover:bg-violet-400">
+          {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <WandSparkles data-icon="inline-start" />}
+          {stage === 'uploading' ? `Uploading ${Math.round(uploadProgress * 100)}%` : stage === 'planning' ? (transcript.trim() ? 'AI is picking moments…' : 'Planning clips…') : `Create ${count} shorts`}
+        </Button>
+        {stage === 'uploading' && <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.08]"><div className="h-full bg-gradient-to-r from-violet-500 to-indigo-400 transition-all" style={{ width: `${Math.round(uploadProgress * 100)}%` }} /></div>}
+        {stage === 'uploading' && <p className="text-xs text-[#777a86]">Keep this tab open until the upload finishes. Rendering happens on Cloudinary afterwards, so you can leave once it starts.</p>}
+      </section>}
+
+      {projectId && <section className="mt-8">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-[#111216] p-4">
+          <div>
+            <p className="text-sm font-medium">{projectView?.name || 'Loading project…'}</p>
+            <p className="mt-1 text-xs text-[#858894]">
+              {stage === 'done' ? `All ${clips.length} shorts are ready.` : stage === 'failed' ? `${readyCount}/${clips.length} shorts ready.` : `Rendering on Cloudinary: ${readyCount}/${clips.length || '…'} ready. Long videos can take several minutes, and you can close this tab and come back from the dashboard.`}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            {readyCount > 0 && <Button onClick={downloadAll} disabled={downloadingAll} className="gap-2 rounded-xl bg-white text-black hover:bg-white/90">{downloadingAll ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}Download {readyCount === clips.length ? 'all' : `${readyCount} ready`}</Button>}
+            <Button variant="outline" onClick={reset} className="rounded-xl border-white/[0.1] bg-transparent">New video</Button>
+          </div>
+        </div>
+        {stage === 'rendering' && <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/[0.08]"><div className="h-full bg-gradient-to-r from-violet-500 to-indigo-400 transition-all" style={{ width: `${clips.length ? Math.max(4, (readyCount / clips.length) * 100) : 4}%` }} /></div>}
+
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {clips.map((item) => <article key={item.id} className="overflow-hidden rounded-2xl border border-white/[0.08] bg-[#111216]">
+            <div className="relative aspect-[9/16] bg-black">
+              {item.status === 'ready'
+                ? <video src={item.url} controls preload="metadata" playsInline className="h-full w-full object-contain" />
+                : <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-[#858894]"><Loader2 className="size-5 animate-spin text-violet-300" />Rendering…</div>}
+              <span className="absolute left-2 top-2 rounded-md bg-black/60 px-2 py-1 text-[10px] text-white/80">#{item.position} · {formatTimestamp(item.start)}–{formatTimestamp(item.start + item.duration)}</span>
+            </div>
+            <div className="p-3">
+              <p className="text-sm font-medium leading-snug">{item.title}</p>
+              {item.reason && <p className="mt-1 text-xs text-[#858894]">{item.reason}</p>}
+              <div className="mt-3 flex gap-2">
+                <Button size="sm" disabled={item.status !== 'ready'} onClick={() => downloadClip(item, projectView?.name || 'short')} className="gap-1.5 rounded-lg bg-violet-500 hover:bg-violet-400"><Download data-icon="inline-start" />MP4</Button>
+                <Button size="sm" variant="outline" onClick={() => copyTitle(item)} className="gap-1.5 rounded-lg border-white/[0.1] bg-transparent">{copied === item.id ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}Title</Button>
+              </div>
+            </div>
+          </article>)}
+        </div>
+      </section>}
+
+      {note && <p className="mt-4 text-sm text-amber-200">{note}</p>}
+      {error && <p className="mt-4 text-sm text-red-300">{error}</p>}
+    </div>
+  </main>
+}
