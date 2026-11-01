@@ -53,25 +53,54 @@ export function planEvenly(videoDuration: number, count: number, clipDuration: n
   })
 }
 
+/** A source video uploaded as consecutive parts: each part's start offset and length (seconds). */
+export type SourcePart = { offset: number; duration: number }
+
+/** Which part fully contains [start, start + clipDuration], or -1 if the clip would straddle a cut. */
+export function partIndexFor(start: number, clipDuration: number, parts: SourcePart[]) {
+  return parts.findIndex((part) => start >= part.offset - 0.001 && start + clipDuration <= part.offset + part.duration + 0.001)
+}
+
 /**
- * Validate AI (or any) picks: clamp into bounds, round, sort, drop overlaps,
- * then top up from an even spread so the user always gets `count` clips when they fit.
+ * Move a clip that straddles a part boundary fully onto the side holding most of it.
+ * Returns null when no nearby position fits (e.g. a tail part shorter than the clip).
+ */
+export function fitToParts(start: number, clipDuration: number, parts: SourcePart[]): number | null {
+  if (parts.length <= 1 || partIndexFor(start, clipDuration, parts) >= 0) return start
+  const cut = parts.find((part) => part.offset > start && part.offset < start + clipDuration)?.offset
+  if (cut === undefined) return null
+  const before = Math.floor(cut - clipDuration)
+  const after = Math.ceil(cut)
+  const preferAfter = start + clipDuration - cut > cut - start
+  for (const candidate of preferAfter ? [after, before] : [before, after]) {
+    if (candidate >= 0 && partIndexFor(candidate, clipDuration, parts) >= 0) return candidate
+  }
+  return null
+}
+
+/**
+ * Validate AI (or any) picks: clamp into bounds, round, keep each clip inside one
+ * uploaded part, sort, drop overlaps, then top up from an even spread so the user
+ * always gets `count` clips when they fit.
  */
 export function finalizePlan(
   picks: Array<{ start: number; title?: string; reason?: string }>,
   videoDuration: number,
   count: number,
   clipDuration: number,
+  parts: SourcePart[] = [],
 ): ClipPlan[] {
   const total = feasibleCount(videoDuration, clipDuration, count)
   if (total < 1) return []
   const maxStart = Math.max(0, Math.floor(videoDuration - clipDuration))
   const overlaps = (a: number, list: ClipPlan[]) => list.some((clip) => Math.abs(clip.start - a) < clipDuration)
+  const place = (raw: number) => fitToParts(Math.min(maxStart, Math.max(0, Math.round(raw))), clipDuration, parts)
 
   const chosen: ClipPlan[] = []
   const cleaned = picks
     .filter((pick) => Number.isFinite(pick.start))
-    .map((pick) => ({ ...pick, start: Math.min(maxStart, Math.max(0, Math.round(pick.start))) }))
+    .map((pick) => ({ ...pick, start: place(pick.start) }))
+    .filter((pick): pick is typeof pick & { start: number } => pick.start !== null)
     .sort((a, b) => a.start - b.start)
 
   for (const pick of cleaned) {
@@ -87,9 +116,44 @@ export function finalizePlan(
 
   if (chosen.length < total) {
     // Try many candidate positions so the top-up still succeeds when picks cluster.
-    for (const filler of planEvenly(videoDuration, feasibleCount(videoDuration, clipDuration, SHORTS_LIMITS.maxCount * 3), clipDuration)) {
+    // Evenly spread positions first (so top-ups don't cluster at the start), then a denser
+    // grid as backup for when snapping/overlaps reject some of them.
+    const fillers = [
+      ...planEvenly(videoDuration, total, clipDuration),
+      ...planEvenly(videoDuration, feasibleCount(videoDuration, clipDuration, SHORTS_LIMITS.maxCount * 3), clipDuration),
+      // Last resort: pack clips back-to-back inside each part, which always reaches the maximum.
+      ...(parts.length ? parts : [{ offset: 0, duration: videoDuration }]).flatMap((part) => {
+        const first = Math.ceil(part.offset)
+        const slots = Math.max(0, Math.floor((part.offset + part.duration - first) / clipDuration))
+        return Array.from({ length: slots }, (_, k) => ({ start: first + k * clipDuration, duration: clipDuration, title: `Part (${formatTimestamp(first + k * clipDuration)})`, reason: 'Evenly spaced across the video (no transcript provided).' }))
+      }),
+    ]
+    for (const filler of fillers) {
       if (chosen.length >= total) break
-      if (!overlaps(filler.start, chosen)) chosen.push({ ...filler, title: `Clip at ${formatTimestamp(filler.start)}` })
+      const start = fitToParts(filler.start, clipDuration, parts)
+      if (start !== null && !overlaps(start, chosen)) {
+        chosen.push({ ...filler, start, title: picks.length ? `Clip at ${formatTimestamp(start)}` : filler.title.replace(/\(.*\)/, `(${formatTimestamp(start)})`) })
+      }
+    }
+  }
+
+  if (chosen.length < total) {
+    // Greedy placement can strand space when clips nearly fill the video. Rebuild from
+    // back-to-back slots inside each part, spread evenly: always the maximum that fits.
+    const slots = (parts.length ? parts : [{ offset: 0, duration: videoDuration }]).flatMap((part) => {
+      const first = Math.ceil(part.offset)
+      const fit = Math.max(0, Math.floor((part.offset + part.duration - first) / clipDuration))
+      return Array.from({ length: fit }, (_, k) => first + k * clipDuration)
+    })
+    if (slots.length > chosen.length) {
+      const take = Math.min(total, slots.length)
+      const picked = Array.from({ length: take }, (_, i) => slots[take === 1 ? 0 : Math.round((i * (slots.length - 1)) / (take - 1))])
+      return [...new Set(picked)].map((start, index) => ({
+        start,
+        duration: clipDuration,
+        title: `Part ${index + 1} (${formatTimestamp(start)})`,
+        reason: 'Evenly spaced across the video.',
+      }))
     }
   }
 

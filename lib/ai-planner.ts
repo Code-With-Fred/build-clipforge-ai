@@ -1,6 +1,6 @@
 import { generateObject } from 'ai'
 import { z } from 'zod'
-import { finalizePlan, formatTimestamp, planEvenly, transcriptForPrompt, type ClipPlan, type TranscriptSegment } from '@/lib/shorts'
+import { finalizePlan, formatTimestamp, transcriptForPrompt, type ClipPlan, type SourcePart, type TranscriptSegment } from '@/lib/shorts'
 
 const pickSchema = z.object({
   clips: z.array(z.object({
@@ -22,9 +22,11 @@ export async function planShorts(options: {
   clipDuration: number
   segments: TranscriptSegment[]
   videoName: string
+  parts?: SourcePart[]
 }): Promise<PlanResult> {
-  const { videoDuration, count, clipDuration, segments } = options
-  if (segments.length < 5) return { clips: planEvenly(videoDuration, count, clipDuration), mode: 'even' }
+  const { videoDuration, count, clipDuration, segments, parts = [] } = options
+  const evenly = () => finalizePlan([], videoDuration, count, clipDuration, parts)
+  if (segments.length < 5) return { clips: evenly(), mode: 'even' }
 
   try {
     const { object } = await generateObject({
@@ -45,12 +47,12 @@ Rules:
 Transcript (each line tagged with its start time in seconds):
 ${transcriptForPrompt(segments)}`,
     })
-    const clips = finalizePlan(object.clips, videoDuration, count, clipDuration)
+    const clips = finalizePlan(object.clips, videoDuration, count, clipDuration, parts)
     return { clips, mode: 'ai' }
   } catch (error) {
     console.error('[clipforge] AI planning failed, using even spread', error)
     return {
-      clips: planEvenly(videoDuration, count, clipDuration),
+      clips: evenly(),
       mode: 'even',
       note: 'AI moment selection was unavailable, so clips were spread evenly. Check AI Gateway access.',
     }
