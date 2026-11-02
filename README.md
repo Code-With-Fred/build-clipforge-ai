@@ -52,6 +52,13 @@ Open the app and click **New project**. There is no login: this is a single-user
 Rendering pipeline per short: cut on the long video (eager) → saved as its own asset →
 captions + hook burned on (eager) → ready. If captioning fails, the plain short is delivered.
 
+## Storage (Cloudinary Free plan)
+
+Every short is saved as its own small asset, so once all shorts of a project are ready the
+big source video and its audio track are **deleted automatically** (downloads keep working).
+Older projects have a **Free up space** button in the editor. **Delete** removes a project,
+its shorts and every Cloudinary file it created: download what you need first.
+
 Only clip videos you own or have permission to use: clips of other people's content get
 Content ID claims and copyright strikes no matter how they are edited.
 

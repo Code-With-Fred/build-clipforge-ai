@@ -164,6 +164,18 @@ export async function POST(request: Request) {
     contentType: 'video/mp4',
     size: Math.min(source.bytes ?? 0, 2_147_483_647),
   })))
+  // Track the audio track too, so freeing storage removes it with the source.
+  if (input.audioPublicId) {
+    await db.insert(upload).values({
+      id: randomUUID(),
+      userId: OWNER_ID,
+      projectId,
+      pathname: input.audioPublicId,
+      filename: `${input.name} (audio for captions)`,
+      contentType: 'audio/mpeg',
+      size: 0,
+    })
+  }
   await db.insert(clip).values(clips.map(({ publicId: _publicId, ...row }) => row))
 
   try {
