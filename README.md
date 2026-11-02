@@ -50,7 +50,23 @@ Open the app and click **New project**. There is no login: this is a single-user
 - A downloadable `.srt` captions file
 
 Rendering pipeline per short: cut on the long video (eager) → saved as its own asset →
-captions + hook burned on (eager) → ready. If captioning fails, the plain short is delivered.
+captions + hook (+ gameplay) burned on (eager) → ready. If finishing fails, the plain short is delivered.
+
+## Look: split-screen + caption styles
+
+In the editor's **Look** section:
+
+- **Layout**: *Full vertical* (1080×1920) or *Split-screen + gameplay*. Split-screen puts your clip
+  in the top half (1080×960) and a random stretch of a background clip from your **gameplay
+  library** in the bottom half. Captions sit on the seam in the middle.
+- **Gameplay library**: click **+ Add gameplay clip** to upload background footage (Minecraft
+  parkour, Subway Surfers-style runs, satisfying loops...). Its audio is stripped in the browser
+  before upload, so only your clip's speech is heard. Each clip must be at least the short's
+  length + 1 second and under your Cloudinary upload limit (100 MB on Free). Clips rotate across
+  shorts, each from a random start. Only use footage you recorded or that is licensed for reuse.
+  Library clips live in `clipforge/gameplay/` and are kept when projects are deleted.
+- **Caption style**: Classic, Yellow pop, Big & bold, Black on white or Small & subtle;
+  **position** lower third or middle (split-screen is always middle).
 
 ## Storage (Cloudinary Free plan)
 

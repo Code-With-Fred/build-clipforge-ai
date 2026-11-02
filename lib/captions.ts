@@ -95,3 +95,16 @@ export function cloudinaryText(text: string) {
   const clean = text.replace(/[\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 90)
   return encodeURIComponent(clean).replace(/%2C/gi, '%252C').replace(/%2F/gi, '%252F')
 }
+
+/** Burned-in caption looks (Cloudinary subtitle layer options). Shared by the UI and renderer. */
+export const CAPTION_STYLES = {
+  classic: { label: 'Classic: white on dark box', font: 'Arial_46_bold', color: 'white', background: 'rgb:000000aa' },
+  yellow: { label: 'Yellow pop', font: 'Arial_50_bold', color: 'rgb:FFE234', background: 'rgb:000000b3' },
+  bold: { label: 'Big & bold', font: 'Arial_58_bold', color: 'white', background: 'rgb:000000c0' },
+  light: { label: 'Black on white', font: 'Arial_46_bold', color: 'black', background: 'rgb:ffffffe6' },
+  small: { label: 'Small & subtle', font: 'Arial_38_bold', color: 'white', background: 'rgb:00000080' },
+} as const
+
+export type CaptionStyle = keyof typeof CAPTION_STYLES
+export type CaptionPosition = 'lower' | 'middle'
+export const CAPTION_STYLE_IDS = Object.keys(CAPTION_STYLES) as CaptionStyle[]
