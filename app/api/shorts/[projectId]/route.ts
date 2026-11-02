@@ -1,7 +1,8 @@
 import { and, asc, eq } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { checkClipReady, clipUrl, finishingTransformation, getCloudinaryConfig, queueClipRenders, saveRenderedClip, uploadCaptions } from '@/lib/cloudinary'
+import { deleteProject, freeSourceStorage, storageSummary } from '@/lib/cleanup'
+import { checkClipReady, clipUrl, finishingTransformation, getCloudinaryConfig, queueClipRenders, saveRenderedClip, savedClipUrl, uploadCaptions } from '@/lib/cloudinary'
 import { db } from '@/lib/db'
 import { ensureClipTable } from '@/lib/db/ensure'
 import { clip, project } from '@/lib/db/schema'
@@ -24,6 +25,8 @@ type ClipRow = typeof clip.$inferSelect
  *   → finishing (saved as its own asset; captions + hook burned on-the-fly)
  *   → ready.
  * If captioning fails, the plain render is delivered instead of nothing.
+ * Shorts without captions/hook are also saved as their own asset, so the big source
+ * video can be deleted afterwards (see lib/cleanup.ts) without breaking downloads.
  */
 export async function GET(_request: Request, { params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await params
@@ -50,9 +53,17 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
       if (item.status === 'processing') {
         const base = await checkClipReady(item.renderUrl || item.url)
         if (!base.ready) return item
-        if (item.finishing !== 'pending' || !config) return update(item, { status: 'ready' })
+        if (!config) return update(item, { status: 'ready' })
         if (finishBudget <= 0) return item
         finishBudget -= 1
+        if (item.finishing !== 'pending') {
+          try {
+            const saved = await saveRenderedClip(config, item.renderUrl || item.url, `clipforge/shorts/${item.id}`)
+            return update(item, { status: 'ready', url: savedClipUrl(config.cloudName, saved.public_id) })
+          } catch {
+            return update(item, { status: 'ready' }) // still downloadable from the source render
+          }
+        }
         try {
           const saved = await saveRenderedClip(config, item.renderUrl || item.url, `clipforge/shorts/${item.id}`)
           const captionsId = item.captions ? `clipforge/captions/${item.id}.srt` : undefined
@@ -86,10 +97,13 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
       const status = allReady ? 'ready' : 'failed'
       await db.update(project).set({ status, updatedAt: new Date() }).where(eq(project.id, projectId))
       owned.status = status
+      // All shorts exist on their own now: free the big source video automatically.
+      if (allReady) await freeSourceStorage(projectId, 0).catch((error) => console.error('[clipforge] auto-free failed', error))
     }
   }
 
   return NextResponse.json({
+    storage: await storageSummary(projectId),
     project: { id: owned.id, name: owned.name, status: owned.status, duration: owned.duration, createdAt: owned.createdAt, rightsSource: owned.rightsSource, rightsProof: owned.rightsProof },
     clips: clips.map(({ userId: _userId, transformation: _transformation, renderUrl: _renderUrl, finishing: _finishing, ...rest }) => rest),
   })
@@ -110,4 +124,17 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ pr
     .returning({ id: clip.id, youtubeCheck: clip.youtubeCheck })
   if (!updated) return NextResponse.json({ error: 'Short not found.' }, { status: 404 })
   return NextResponse.json(updated)
+}
+
+/** Delete the project, its shorts and every Cloudinary file it created. */
+export async function DELETE(_request: Request, { params }: { params: Promise<{ projectId: string }> }) {
+  const { projectId } = await params
+  await ensureClipTable()
+  try {
+    const result = await deleteProject(projectId)
+    if (!result.deleted) return NextResponse.json({ error: 'Project not found.' }, { status: 404 })
+    return NextResponse.json({ deleted: true })
+  } catch (error) {
+    return NextResponse.json({ error: `Could not delete the project: ${error instanceof Error ? error.message : 'unknown error'}` }, { status: 502 })
+  }
 }

@@ -174,3 +174,30 @@ export function finishingTransformation(options: { captionsPublicId?: string; ho
   steps.push('q_auto,vc_h264,ac_aac')
   return steps.join('/')
 }
+
+/** Untransformed delivery URL of a saved short (already 1080x1920 H.264/AAC). */
+export function savedClipUrl(cloudName: string, publicId: string) {
+  return `https://res.cloudinary.com/${cloudName}/video/upload/${encodePublicId(publicId)}.mp4`
+}
+
+/**
+ * Permanently delete assets (and all their derived renders) via the Admin API,
+ * 100 per request. Missing assets are not an error.
+ */
+export async function deleteResources(config: CloudinaryConfig, resourceType: 'video' | 'raw', publicIds: string[]) {
+  const auth = `Basic ${Buffer.from(`${config.apiKey}:${config.apiSecret}`).toString('base64')}`
+  let deleted = 0
+  for (let offset = 0; offset < publicIds.length; offset += 100) {
+    const query = new URLSearchParams()
+    publicIds.slice(offset, offset + 100).forEach((id) => query.append('public_ids[]', id))
+    const response = await fetch(`https://api.cloudinary.com/v1_1/${config.cloudName}/resources/${resourceType}/upload?${query}`, {
+      method: 'DELETE',
+      headers: { Authorization: auth },
+      signal: AbortSignal.timeout(30_000),
+    })
+    if (!response.ok) throw new Error(await cloudinaryError(response))
+    const body = await response.json().catch(() => ({})) as { deleted?: Record<string, string> }
+    deleted += Object.values(body.deleted ?? {}).filter((state) => state === 'deleted').length
+  }
+  return deleted
+}

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Captions, Check, Copy, Download, FileText, Loader2, ShieldAlert, ShieldCheck, ShieldQuestion, Upload, WandSparkles } from 'lucide-react'
+import { Captions, Check, Copy, Download, FileText, HardDrive, Loader2, ShieldAlert, ShieldCheck, ShieldQuestion, Trash2, Upload, WandSparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { formatTimestamp, type CropMode } from '@/lib/shorts'
 import { extractAudio, parseSizeLimit, rememberedSizeLimit, rememberSizeLimit, splitVideo } from '@/lib/split-video'
@@ -162,6 +162,8 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
   const [clips, setClips] = useState<ClipView[]>([])
   const [copied, setCopied] = useState('')
   const [downloadingAll, setDownloadingAll] = useState(false)
+  const [storage, setStorage] = useState<{ sourcesStored: boolean; sourceBytes: number } | null>(null)
+  const [storageBusy, setStorageBusy] = useState<'' | 'free' | 'delete'>('')
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [partLabel, setPartLabel] = useState('')
@@ -175,6 +177,7 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
       if (!response.ok) throw new Error(String(body.error || 'Could not load the project.'))
       const nextProject = body.project as ProjectView
       const nextClips = body.clips as ClipView[]
+      if (body.storage) setStorage(body.storage as { sourcesStored: boolean; sourceBytes: number })
       setProjectView(nextProject)
       setClips(nextClips)
       if (nextProject.status === 'ready') { setStage('done'); return }
@@ -335,6 +338,46 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
     setTimeout(() => setCopied(''), 1500)
   }
   const youtubeDescription = (item: ClipView) => [item.description, item.hashtags].filter(Boolean).join('\n\n')
+  // Delete the big source video (and audio) once the shorts exist; repeats while older
+  // shorts are being saved as standalone files.
+  const freeSpace = async () => {
+    setStorageBusy('free'); setError('')
+    try {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const response = await fetch(`/api/shorts/${projectId}/free`, { method: 'POST' })
+        const body = await readJson(response)
+        if (!response.ok) throw new Error(String(body.error || 'Could not free up space.'))
+        if (body.storage) setStorage(body.storage as { sourcesStored: boolean; sourceBytes: number })
+        if (body.done) {
+          const mb = Math.round(Number(body.freedBytes || 0) / 1048576)
+          setNote(`Freed ${mb > 0 ? `${mb} MB` : 'the source files'} on Cloudinary. Your shorts stay downloadable.`)
+          await poll(projectId)
+          return
+        }
+      }
+      throw new Error('Still saving shorts. Click "Free up space" again to continue.')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not free up space.')
+    } finally {
+      setStorageBusy('')
+    }
+  }
+
+  const deleteWholeProject = async () => {
+    if (!window.confirm('Delete this project, all its shorts and every Cloudinary file it created? Download the shorts you need first. This cannot be undone.')) return
+    setStorageBusy('delete'); setError('')
+    try {
+      const response = await fetch(`/api/shorts/${projectId}`, { method: 'DELETE' })
+      const body = await readJson(response)
+      if (!response.ok) throw new Error(String(body.error || 'Could not delete the project.'))
+      if (pollTimer.current) clearTimeout(pollTimer.current)
+      window.location.href = '/'
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not delete the project.')
+      setStorageBusy('')
+    }
+  }
+
   const setYoutubeCheck = async (item: ClipView, youtubeCheck: NonNullable<ClipView['youtubeCheck']>) => {
     setClips((current) => current.map((entry) => (entry.id === item.id ? { ...entry, youtubeCheck } : entry)))
     const response = await fetch(`/api/shorts/${projectId}`, {
@@ -456,10 +499,18 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
               {clips.some((entry) => entry.youtubeCheck === 'claimed') && <> · <span className="text-amber-200">{clips.filter((entry) => entry.youtubeCheck === 'claimed').length} claimed</span></>}
               {' '}· {clips.filter((entry) => entry.status === 'ready' && (!entry.youtubeCheck || entry.youtubeCheck === 'pending')).length} not checked yet
             </p>}
+            {storage && <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[#858894]">
+              <HardDrive className="size-3.5" />
+              {storage.sourcesStored
+                ? <>Source video still stored on Cloudinary{storage.sourceBytes > 0 ? ` (${Math.round(storage.sourceBytes / 1048576)} MB)` : ''}.
+                  {stage === 'done' && <button type="button" disabled={Boolean(storageBusy)} onClick={freeSpace} className="rounded-md bg-white/[0.06] px-2 py-0.5 text-violet-200 hover:bg-white/[0.12] disabled:opacity-50">{storageBusy === 'free' ? 'Freeing…' : 'Free up space'}</button>}</>
+                : <span className="text-emerald-300">Source video deleted to save space. Shorts stay downloadable.</span>}
+            </p>}
           </div>
           <div className="flex gap-2">
             {readyCount > 0 && <Button onClick={downloadAll} disabled={downloadingAll} className="gap-2 rounded-xl bg-white text-black hover:bg-white/90">{downloadingAll ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}Download {readyCount === clips.length ? 'all' : `${readyCount} ready`}</Button>}
             <Button variant="outline" onClick={reset} className="rounded-xl border-white/[0.1] bg-transparent">New video</Button>
+            <Button variant="outline" onClick={deleteWholeProject} disabled={Boolean(storageBusy) || stage === 'rendering'} title="Delete project and all its files" className="gap-1.5 rounded-xl border-red-300/30 bg-transparent text-red-200 hover:bg-red-400/10">{storageBusy === 'delete' ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Trash2 data-icon="inline-start" />}Delete</Button>
           </div>
         </div>
         {stage === 'rendering' && <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/[0.08]"><div className="h-full bg-gradient-to-r from-violet-500 to-indigo-400 transition-all" style={{ width: `${clips.length ? Math.max(4, (readyCount / clips.length) * 100) : 4}%` }} /></div>}
