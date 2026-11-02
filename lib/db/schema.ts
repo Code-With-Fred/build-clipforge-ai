@@ -93,6 +93,23 @@ export const clip = pgTable('clip', {
   detail: text('detail').notNull().default(''),
   // Result of YouTube Studio's copyright "Checks" step: 'pending' | 'passed' | 'claimed'.
   youtubeCheck: text('youtubeCheck').notNull().default('pending'),
+  // Look: 'full' (vertical crop) or 'split' (clip on top, gameplay below), plus caption style.
+  layout: text('layout').notNull().default('full'),
+  gameplayPublicId: text('gameplayPublicId'),
+  gameplayStart: integer('gameplayStart').notNull().default(0),
+  captionStyle: text('captionStyle').notNull().default('classic'),
+  captionPosition: text('captionPosition').notNull().default('lower'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
   updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+})
+
+/** Background gameplay library for split-screen shorts (kept across projects). */
+export const gameplay = pgTable('gameplay', {
+  id: text('id').primaryKey(),
+  userId: text('userId').notNull(),
+  publicId: text('publicId').notNull(),
+  name: text('name').notNull(),
+  duration: integer('duration').notNull(),
+  size: integer('size').notNull().default(0),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
 })

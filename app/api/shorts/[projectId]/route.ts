@@ -1,6 +1,7 @@
 import { and, asc, eq } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
+import type { CaptionPosition, CaptionStyle } from '@/lib/captions'
 import { deleteProject, freeSourceStorage, storageSummary } from '@/lib/cleanup'
 import { checkClipReady, clipUrl, finishingTransformation, getCloudinaryConfig, queueClipRenders, saveRenderedClip, savedClipUrl, uploadCaptions } from '@/lib/cloudinary'
 import { db } from '@/lib/db'
@@ -45,7 +46,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
       return { ...item, ...changes }
     }
     const deliverPlain = (item: ClipRow, reason: string) =>
-      update(item, { status: 'ready', url: item.renderUrl || item.url, finishing: 'failed', detail: `Captions could not be added (${reason.slice(0, 200)}); the plain short is ready.` })
+      update(item, { status: 'ready', url: item.renderUrl || item.url, finishing: 'failed', detail: item.layout === 'split' ? `The split-screen render failed (${reason.slice(0, 200)}); this is the top half only. Try again or use the full layout.` : `Captions could not be added (${reason.slice(0, 200)}); the plain short is ready.` })
 
     clips = await Promise.all(clips.map(async (item) => {
       if (item.status === 'ready') return item
@@ -68,7 +69,13 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
           const saved = await saveRenderedClip(config, item.renderUrl || item.url, `clipforge/shorts/${item.id}`)
           const captionsId = item.captions ? `clipforge/captions/${item.id}.srt` : undefined
           if (captionsId) await uploadCaptions(config, item.captions, captionsId)
-          const finishing = finishingTransformation({ captionsPublicId: captionsId, hookText: item.hook || undefined })
+          const finishing = finishingTransformation({
+            captionsPublicId: captionsId,
+            hookText: item.hook || undefined,
+            captionStyle: item.captionStyle as CaptionStyle,
+            captionPosition: item.captionPosition as CaptionPosition,
+            gameplay: item.layout === 'split' && item.gameplayPublicId ? { publicId: item.gameplayPublicId, start: item.gameplayStart, duration: item.duration } : undefined,
+          })
           // Background render: works for shorts above the on-the-fly size limit (40 MB on Free).
           await queueClipRenders(config, saved.public_id, [finishing])
           const finalUrl = clipUrl(config.cloudName, saved.public_id, finishing)

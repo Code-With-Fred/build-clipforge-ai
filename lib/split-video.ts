@@ -154,6 +154,28 @@ export async function extractAudio(file: File, onProgress?: (fraction: number) =
   }
 }
 
+/**
+ * Gameplay for split-screen: drop the audio track (so it never competes with speech) and
+ * remux without re-encoding. Also makes the file smaller. Returns the original file if
+ * remuxing fails for an unusual container.
+ */
+export async function stripAudio(file: File): Promise<File> {
+  const ffmpeg = await getFFmpeg()
+  try { await ffmpeg.createDir(MOUNT) } catch { /* already exists */ }
+  await ffmpeg.mount('WORKERFS', { files: [file] }, MOUNT)
+  const output = '/gameplay.mp4'
+  try {
+    const code = await ffmpeg.exec(['-hide_banner', '-i', `${MOUNT}/${file.name}`, '-map', '0:v:0', '-an', '-c', 'copy', '-movflags', '+faststart', output])
+    if (code !== 0) return file
+    const data = await ffmpeg.readFile(output)
+    const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
+    return bytes.length ? new File([bytes as BlobPart], `${file.name.replace(/\.[^.]+$/, '')}-silent.mp4`, { type: 'video/mp4' }) : file
+  } finally {
+    await ffmpeg.deleteFile(output).catch(() => undefined)
+    try { await ffmpeg.unmount(MOUNT) } catch { /* ignore */ }
+  }
+}
+
 /** Parses Cloudinary's "File size too large. Got X. Maximum is Y." into Y (bytes). */
 export function parseSizeLimit(message: string) {
   const match = message.match(/Maximum is (\d+)/i)

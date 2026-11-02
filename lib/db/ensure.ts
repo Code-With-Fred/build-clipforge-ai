@@ -39,6 +39,20 @@ const SCHEMA_SQL = `
     ALTER TABLE "clip" ADD COLUMN IF NOT EXISTS "youtubeCheck" text NOT NULL DEFAULT 'pending';
     ALTER TABLE "project" ADD COLUMN IF NOT EXISTS "rightsSource" text;
     ALTER TABLE "project" ADD COLUMN IF NOT EXISTS "rightsProof" text;
+    ALTER TABLE "clip" ADD COLUMN IF NOT EXISTS "layout" text NOT NULL DEFAULT 'full';
+    ALTER TABLE "clip" ADD COLUMN IF NOT EXISTS "gameplayPublicId" text;
+    ALTER TABLE "clip" ADD COLUMN IF NOT EXISTS "gameplayStart" integer NOT NULL DEFAULT 0;
+    ALTER TABLE "clip" ADD COLUMN IF NOT EXISTS "captionStyle" text NOT NULL DEFAULT 'classic';
+    ALTER TABLE "clip" ADD COLUMN IF NOT EXISTS "captionPosition" text NOT NULL DEFAULT 'lower';
+    CREATE TABLE IF NOT EXISTS "gameplay" (
+      "id" text PRIMARY KEY,
+      "userId" text NOT NULL,
+      "publicId" text NOT NULL,
+      "name" text NOT NULL,
+      "duration" integer NOT NULL,
+      "size" integer NOT NULL DEFAULT 0,
+      "createdAt" timestamp NOT NULL DEFAULT now()
+    );
 `
 
 async function runSchemaSetup() {

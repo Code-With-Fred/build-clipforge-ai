@@ -1,10 +1,11 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Captions, Check, Copy, Download, FileText, HardDrive, Loader2, ShieldAlert, ShieldCheck, ShieldQuestion, Trash2, Upload, WandSparkles } from 'lucide-react'
+import { Captions, Check, Copy, Download, FileText, Gamepad2, HardDrive, Loader2, ShieldAlert, ShieldCheck, ShieldQuestion, Trash2, Upload, WandSparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { formatTimestamp, type CropMode } from '@/lib/shorts'
-import { extractAudio, parseSizeLimit, rememberedSizeLimit, rememberSizeLimit, splitVideo } from '@/lib/split-video'
+import { extractAudio, parseSizeLimit, rememberedSizeLimit, rememberSizeLimit, splitVideo, stripAudio } from '@/lib/split-video'
+import { CAPTION_STYLES, CAPTION_STYLE_IDS, type CaptionPosition, type CaptionStyle } from '@/lib/captions'
 
 type ClipView = {
   id: string
@@ -72,9 +73,9 @@ function fatal(message: string) {
 }
 
 /** Upload straight from the browser to Cloudinary in 20 MB chunks (bypasses Vercel's 4.5 MB body limit). */
-async function uploadToCloudinary(source: File | string, onProgress: (fraction: number) => void) {
+async function uploadToCloudinary(source: File | string, onProgress: (fraction: number) => void, folder?: 'gameplay') {
   const loadSignature = async () => {
-    const response = await fetch('/api/cloudinary/config', { cache: 'no-store' })
+    const response = await fetch(`/api/cloudinary/config${folder ? `?folder=${folder}` : ''}`, { cache: 'no-store' })
     const body = await readJson(response)
     if (!response.ok) throw new Error(String(body.error || 'Cloudinary is not configured.'))
     return { ...body, loadedAt: Date.now() } as Record<string, unknown>
@@ -150,6 +151,12 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
   const [captionsOn, setCaptionsOn] = useState(true)
   const [hookOn, setHookOn] = useState(true)
   const [sourceCredit, setSourceCredit] = useState('')
+  const [layout, setLayout] = useState<'full' | 'split'>('full')
+  const [captionStyle, setCaptionStyle] = useState<CaptionStyle>('classic')
+  const [captionPosition, setCaptionPosition] = useState<CaptionPosition>('lower')
+  const [gameplayList, setGameplayList] = useState<Array<{ id: string; name: string; duration: number }>>([])
+  const [gameplaySelected, setGameplaySelected] = useState<string[]>([])
+  const [gameplayBusy, setGameplayBusy] = useState('')
   const [rightsSource, setRightsSource] = useState<RightsSource>('')
   const [rightsProof, setRightsProof] = useState('')
   const rightsReady = rightsSource === 'own' || (rightsSource === 'permission' && rightsProof.trim().length > 0)
@@ -192,6 +199,45 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
     }
     pollTimer.current = setTimeout(() => poll(id), POLL_MS)
   }, [])
+
+  const loadGameplay = useCallback(async () => {
+    const body = await readJson(await fetch('/api/gameplay', { cache: 'no-store' }).catch(() => new Response('{}')))
+    if (Array.isArray(body.gameplay)) setGameplayList(body.gameplay as Array<{ id: string; name: string; duration: number }>)
+  }, [])
+  useEffect(() => { loadGameplay() }, [loadGameplay])
+
+  // Gameplay library: audio is stripped in the browser, then the clip is uploaded and registered.
+  const addGameplay = async (picked: File | undefined) => {
+    if (!picked) return
+    setError('')
+    try {
+      setGameplayBusy('Removing audio…')
+      const silent = await stripAudio(picked)
+      setGameplayBusy('Uploading 0%')
+      const uploaded = await uploadToCloudinary(silent, (fraction) => setGameplayBusy(`Uploading ${Math.round(fraction * 100)}%`), 'gameplay')
+      const response = await fetch('/api/gameplay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ publicId: uploaded.public_id, name: picked.name.replace(/\.[^.]+$/, '').slice(0, 200) || 'Gameplay', bytes: Number(uploaded.bytes) || silent.size, duration: Number(uploaded.duration) || undefined }),
+      })
+      const body = await readJson(response)
+      if (!response.ok) throw new Error(String(body.error || 'Could not add the gameplay clip.'))
+      await loadGameplay()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not add the gameplay clip.')
+    } finally {
+      setGameplayBusy('')
+    }
+  }
+
+  const removeGameplay = async (id: string) => {
+    if (!window.confirm('Remove this gameplay clip from the library?')) return
+    const response = await fetch(`/api/gameplay/${id}`, { method: 'DELETE' })
+    const body = await readJson(response)
+    if (!response.ok) { setError(String(body.error || 'Could not remove the gameplay clip.')); return }
+    setGameplaySelected((current) => current.filter((item) => item !== id))
+    await loadGameplay()
+  }
 
   useEffect(() => {
     if (projectId) poll(projectId)
@@ -299,6 +345,10 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
           captions: captionsOn,
           hook: hookOn,
           sourceCredit: sourceCredit.trim() || undefined,
+          layout,
+          gameplayIds: layout === 'split' && gameplaySelected.length ? gameplaySelected : undefined,
+          captionStyle,
+          captionPosition,
           rightsSource,
           rightsProof: rightsProof.trim() || undefined,
         }),
@@ -455,6 +505,58 @@ export function ShortsStudio({ initialProjectId }: { initialProjectId?: string }
           <label className="text-xs text-[#a8aab4] sm:col-span-2">Source credit (added to every description)
             <input value={sourceCredit} disabled={busy} onChange={(event) => setSourceCredit(event.target.value)} placeholder="e.g. From the full episode on @MyPodcast — youtube.com/watch?v=…" className={inputClass} />
           </label>
+        </div>
+
+        <div className="rounded-2xl border border-white/[0.08] bg-[#111216] p-4">
+          <p className="text-xs font-medium text-[#c7c8d0]">Look</p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            {([
+              ['full', 'Full vertical', 'Your clip fills the whole 9:16 screen.'],
+              ['split', 'Split-screen + gameplay', 'Your clip on top, gameplay below, captions in the middle.'],
+            ] as const).map(([value, label, hint]) => (
+              <label key={value} className={`cursor-pointer rounded-xl border p-3 text-sm ${layout === value ? 'border-violet-300/50 bg-violet-400/[0.08]' : 'border-white/[0.08] hover:bg-white/[0.03]'}`}>
+                <input type="radio" name="layout" className="sr-only" checked={layout === value} disabled={busy} onChange={() => setLayout(value)} />
+                <span className="font-medium text-white">{label}</span>
+                <span className="mt-1 block text-xs text-[#858894]">{hint}</span>
+              </label>
+            ))}
+          </div>
+
+          {layout === 'split' && <div className="mt-3 rounded-xl border border-white/[0.06] p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-[#c7c8d0]"><Gamepad2 className="mr-1 inline size-3.5 text-violet-300" />Gameplay library {gameplaySelected.length ? `(${gameplaySelected.length} selected)` : '(all clips are used, one per short)'}</p>
+              <label className={`cursor-pointer rounded-lg bg-white/[0.06] px-2 py-1 text-xs text-violet-200 hover:bg-white/[0.12] ${gameplayBusy ? 'pointer-events-none opacity-60' : ''}`}>
+                {gameplayBusy || '+ Add gameplay clip'}
+                <input type="file" accept="video/*,.mp4,.mov,.webm,.mkv" className="sr-only" disabled={Boolean(gameplayBusy)} onChange={(event) => { addGameplay(event.target.files?.[0]); event.target.value = '' }} />
+              </label>
+            </div>
+            {gameplayList.length === 0
+              ? <p className="mt-2 text-xs text-amber-200">No gameplay yet. Add a clip of your own gameplay or footage marked free to reuse, longer than your shorts (2–5 minutes is ideal, under 100 MB). Its audio is removed automatically.</p>
+              : <ul className="mt-2 space-y-1">{gameplayList.map((item) => (
+                <li key={item.id} className="flex items-center justify-between gap-2 rounded-lg bg-white/[0.03] px-2 py-1.5 text-xs">
+                  <label className="flex min-w-0 items-center gap-2 text-[#c7c8d0]">
+                    <input type="checkbox" checked={gameplaySelected.includes(item.id)} disabled={busy} onChange={(event) => setGameplaySelected((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} />
+                    <span className="truncate">{item.name}</span>
+                    <span className={item.duration > clipDuration ? 'text-[#777a86]' : 'text-amber-200'}>{formatTimestamp(item.duration)}{item.duration > clipDuration ? '' : ' (too short)'}</span>
+                  </label>
+                  <button type="button" onClick={() => removeGameplay(item.id)} className="text-[#858894] hover:text-red-300" aria-label={`Remove ${item.name}`}><Trash2 className="size-3.5" /></button>
+                </li>
+              ))}</ul>}
+          </div>}
+
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="text-xs text-[#a8aab4]">Caption style
+              <select value={captionStyle} disabled={busy} onChange={(event) => setCaptionStyle(event.target.value as CaptionStyle)} className={inputClass}>
+                {CAPTION_STYLE_IDS.map((id) => <option key={id} value={id} className="bg-[#111216]">{CAPTION_STYLES[id].label}</option>)}
+              </select>
+            </label>
+            <label className="text-xs text-[#a8aab4]">Caption position
+              <select value={layout === 'split' ? 'middle' : captionPosition} disabled={busy || layout === 'split'} onChange={(event) => setCaptionPosition(event.target.value as CaptionPosition)} className={inputClass}>
+                <option value="lower" className="bg-[#111216]">Lower third</option>
+                <option value="middle" className="bg-[#111216]">Middle of the screen</option>
+              </select>
+            </label>
+          </div>
         </div>
 
         <fieldset className="rounded-2xl border border-white/[0.08] bg-[#111216] p-4">

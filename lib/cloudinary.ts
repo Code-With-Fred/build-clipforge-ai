@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { cloudinaryText } from '@/lib/captions'
+import { CAPTION_STYLES, cloudinaryText, type CaptionPosition, type CaptionStyle } from '@/lib/captions'
 import type { CropMode } from '@/lib/shorts'
 
 type CloudinaryConfig = {
@@ -35,11 +35,13 @@ export const MISSING_CONFIG_MESSAGE =
  * this exact string, otherwise Cloudinary tries an on-the-fly transform, which fails
  * for sources above its sync limit (40 MB free / 300 MB paid) — i.e. every long video.
  */
-export function clipTransformation(options: { start: number; duration: number; crop: CropMode; grayscale: boolean }) {
+export function clipTransformation(options: { start: number; duration: number; crop: CropMode; grayscale: boolean; layout?: ShortLayout }) {
   const trim = `so_${Math.max(0, Math.round(options.start))},du_${Math.round(options.duration)}`
+  // Split-screen: the clip fills the top half (1080x960); gameplay is added in finishing.
+  const height = options.layout === 'split' ? 960 : 1920
   const frame = options.crop === 'blur'
-    ? 'b_blurred:400:15,c_pad,h_1920,w_1080'
-    : `c_fill,g_${options.crop === 'smart' ? 'auto' : 'center'},h_1920,w_1080`
+    ? `b_blurred:400:15,c_pad,h_${height},w_1080`
+    : `c_fill,g_${options.crop === 'smart' ? 'auto' : 'center'},h_${height},w_1080`
   const encode = `q_auto,vc_h264,ac_aac${options.grayscale ? ',e_grayscale' : ''}`
   return `${trim}/${frame}/${encode}`
 }
@@ -65,7 +67,9 @@ function sign(params: Record<string, string>, apiSecret: string) {
  * the server; the same signature is valid for every chunk of a chunked upload.
  * Signing replaces the need for an unsigned upload preset.
  */
-export function signedUploadParams(config: CloudinaryConfig, folder = 'clipforge/source') {
+export const UPLOAD_FOLDERS = { source: 'clipforge/source', gameplay: 'clipforge/gameplay' } as const
+
+export function signedUploadParams(config: CloudinaryConfig, folder: string = UPLOAD_FOLDERS.source) {
   const params = { folder, timestamp: String(Math.floor(Date.now() / 1000)) }
   return { ...params, api_key: config.apiKey, signature: sign(params, config.apiSecret) }
 }
@@ -161,11 +165,33 @@ export function uploadCaptions(config: CloudinaryConfig, srt: string, publicId: 
  * Burn captions (lower third, above the Shorts UI) and a 3-second hook (top) onto a
  * saved short. Applied on-the-fly to the small clip asset, whose time 0 is the short's start.
  */
-export function finishingTransformation(options: { captionsPublicId?: string; hookText?: string }) {
+export type ShortLayout = 'full' | 'split'
+export type SplitGameplay = { publicId: string; start: number; duration: number }
+
+const layerId = (publicId: string) => publicId.replace(/\//g, ':')
+
+export function finishingTransformation(options: {
+  captionsPublicId?: string
+  hookText?: string
+  captionStyle?: CaptionStyle
+  captionPosition?: CaptionPosition
+  /** Split-screen: the saved short is 1080x960; pad to 1080x1920 and put gameplay below. */
+  gameplay?: SplitGameplay
+}) {
   const steps: string[] = []
+  if (options.gameplay) {
+    const { publicId, start, duration } = options.gameplay
+    steps.push('b_black,c_pad,g_north,h_1920,w_1080')
+    // Gameplay is stored without audio, so only the clip's speech is heard.
+    steps.push(`l_video:${layerId(publicId)},so_${Math.max(0, Math.round(start))},du_${Math.round(duration)},c_fill,h_960,w_1080`)
+    steps.push('fl_layer_apply,g_south')
+  }
   if (options.captionsPublicId) {
-    steps.push(`l_subtitles:Arial_46_bold:${options.captionsPublicId.replace(/\//g, ':')},co_white,b_rgb:000000aa`)
-    steps.push('fl_layer_apply,g_south,y_520')
+    const style = CAPTION_STYLES[options.captionStyle ?? 'classic'] ?? CAPTION_STYLES.classic
+    // Split-screen captions sit on the seam between the halves (the classic clipper look).
+    const position = options.gameplay || options.captionPosition === 'middle' ? 'g_center' : 'g_south,y_520'
+    steps.push(`l_subtitles:${style.font}:${layerId(options.captionsPublicId)},co_${style.color},b_${style.background}`)
+    steps.push(`fl_layer_apply,${position}`)
   }
   if (options.hookText) {
     steps.push(`l_text:Arial_50_bold_center:${cloudinaryText(options.hookText)},co_white,b_rgb:000000c0,c_fit,w_880`)

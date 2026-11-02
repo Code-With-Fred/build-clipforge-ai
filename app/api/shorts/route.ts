@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto'
-import { eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { planShorts } from '@/lib/ai-planner'
-import { buildClipCues, fallbackHook, toSrt, type TimedWord } from '@/lib/captions'
+import { buildClipCues, CAPTION_STYLE_IDS, fallbackHook, toSrt, type CaptionStyle, type TimedWord } from '@/lib/captions'
+import { assignGameplay } from '@/lib/gameplay'
 import { clipTransformation, clipUrl, getCloudinaryConfig, getVideoResource, MISSING_CONFIG_MESSAGE, queueClipRenders } from '@/lib/cloudinary'
 import { db } from '@/lib/db'
 import { ensureClipTable } from '@/lib/db/ensure'
-import { clip, project, upload } from '@/lib/db/schema'
+import { clip, gameplay, project, upload } from '@/lib/db/schema'
 import { OWNER_ID } from '@/lib/owner'
 import { feasibleCount, parseTranscript, partIndexFor, SHORTS_LIMITS, type SourcePart, type TranscriptSegment } from '@/lib/shorts'
 import { transcribeAudioUrl, transcriptionAvailable } from '@/lib/transcribe'
@@ -36,6 +37,11 @@ const requestSchema = z.object({
   audioPublicId: z.string().min(1).max(500).optional(),
   captions: z.boolean().default(true),
   hook: z.boolean().default(true),
+  layout: z.enum(['full', 'split']).default('full'),
+  // Split-screen: which library clips to use (all when omitted).
+  gameplayIds: z.array(z.string().min(1)).max(50).optional(),
+  captionStyle: z.enum(CAPTION_STYLE_IDS as [CaptionStyle, ...CaptionStyle[]]).default('classic'),
+  captionPosition: z.enum(['lower', 'middle']).default('lower'),
   sourceCredit: z.string().trim().max(300).optional(),
   // Where the right to clip comes from. "Not sure" is not accepted: those clips get claimed.
   rightsSource: z.enum(['own', 'permission'], { message: 'Choose where your rights to clip this video come from.' }),
@@ -77,6 +83,16 @@ export async function POST(request: Request) {
 
   await ensureClipTable()
 
+  // Split-screen needs at least one gameplay clip longer than a short; check before any work.
+  let library: Array<{ publicId: string; duration: number }> = []
+  if (input.layout === 'split') {
+    library = await db.select({ publicId: gameplay.publicId, duration: gameplay.duration }).from(gameplay)
+      .where(input.gameplayIds?.length ? and(eq(gameplay.userId, OWNER_ID), inArray(gameplay.id, input.gameplayIds)) : eq(gameplay.userId, OWNER_ID))
+    if (!library.some((item) => item.duration >= input.clipDuration + 1)) {
+      return NextResponse.json({ error: `Split-screen needs a gameplay clip longer than ${input.clipDuration} seconds. Add one in the gameplay library.` }, { status: 400 })
+    }
+  }
+
   // Transcript: pasted by the user, else transcribed automatically from the audio track.
   let segments: TranscriptSegment[] = input.transcript ? parseTranscript(input.transcript) : []
   let words: TimedWord[] = []
@@ -107,6 +123,7 @@ export async function POST(request: Request) {
     parts,
   })
   const credit = input.sourceCredit ? `Credit: ${input.sourceCredit}` : ''
+  const gameplayPicks = input.layout === 'split' ? assignGameplay(plan.clips.length, input.clipDuration, library) ?? [] : []
 
   const projectId = randomUUID()
   const now = new Date()
@@ -115,7 +132,8 @@ export async function POST(request: Request) {
     const partIndex = Math.max(0, partIndexFor(planned.start, planned.duration, parts))
     const publicId = sources[partIndex].publicId
     const localStart = Math.max(0, planned.start - parts[partIndex].offset)
-    const transformation = clipTransformation({ start: localStart, duration: planned.duration, crop: input.crop, grayscale: input.grayscale })
+    const transformation = clipTransformation({ start: localStart, duration: planned.duration, crop: input.crop, grayscale: input.grayscale, layout: input.layout })
+    const pick = gameplayPicks[index]
     const cues = buildClipCues({ words, segments }, planned.start, planned.duration)
     const captions = input.captions && cues.length ? toSrt(cues) : ''
     const hook = input.hook ? (planned.hook || fallbackHook(cues)) : ''
@@ -139,7 +157,12 @@ export async function POST(request: Request) {
       description: [planned.description || '', credit].filter(Boolean).join('\n\n'),
       hashtags: planned.hashtags || '#Shorts',
       // 'pending' = burn captions/hook after the base render; 'none' = deliver as rendered.
-      finishing: captions || hook ? 'pending' : 'none',
+      finishing: captions || hook || pick ? 'pending' : 'none',
+      layout: pick ? 'split' : 'full',
+      gameplayPublicId: pick?.publicId ?? null,
+      gameplayStart: pick?.start ?? 0,
+      captionStyle: input.captionStyle,
+      captionPosition: input.captionPosition,
       createdAt: now,
       updatedAt: now,
     }
